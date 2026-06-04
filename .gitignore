@@ -1,0 +1,9 @@
+.env
+opencode.json
+__pycache__/
+*.pyc
+.venv/
+outputs/
+requirements_*/
+discovery_*/
+solution_design_*/
