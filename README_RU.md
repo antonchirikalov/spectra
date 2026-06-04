@@ -39,7 +39,7 @@ python3 -m venv .venv && .venv/bin/pip install loguru pyyaml
 
 # Настроить окружение
 cp .env.example .env
-# → добавить MOONSHOT_API_KEY и OPENAI_API_KEY в .env
+# → добавить хотя бы один ключ провайдера (MOONSHOT_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, …)
 
 # Запустить извлечение требований
 .venv/bin/python3 requirements_runner.py run /путь/до/папки/с/документами
@@ -81,8 +81,7 @@ cp .env.example .env
 
 - Python 3.11+
 - [opencode](https://opencode.ai) CLI — `brew install anomalyco/tap/opencode`
-- `MOONSHOT_API_KEY` — с [platform.moonshot.ai](https://platform.moonshot.ai)
-- `OPENAI_API_KEY` — с [platform.openai.com](https://platform.openai.com) (опционально, для мульти-модельного дизайна)
+- Ключ хотя бы одного AI-провайдера (см. таблицу ниже)
 
 ### Переменные окружения
 
@@ -90,13 +89,21 @@ cp .env.example .env
 cp .env.example .env
 ```
 
-Заполнить `.env`:
+Заполните `.env` — добавьте ключи нужных провайдеров:
 
+| Провайдер | Переменная | Модели | Примечание |
+|---|---|---|---|
+| Moonshot | `MOONSHOT_API_KEY` | `kimi/kimi-k2.6` | По умолчанию — лучший agentic-бенчмарк |
+| OpenAI | `OPENAI_API_KEY` | `openai/gpt-4o`, `openai/gpt-4.1` | Хорошо для агентов-критиков |
+| DeepSeek | `DEEPSEEK_API_KEY` | `deepseek/deepseek-chat`, `deepseek/deepseek-reasoner` | Дешевле всего для больших объёмов |
+| Qwen | `QWEN_API_KEY` | `qwen/qwen3.6-plus` | Контекст 1M, большие наборы документов |
+| Anthropic | `ANTHROPIC_API_KEY` | `anthropic/claude-sonnet-4-6` | Через CLI `claude` |
+| Fireworks | `FIREWORKS_API_KEY` | `kimi/kimi-k2.6`, любые open-weight | US-хостинг, соответствие data residency |
+
+Для интеграций добавьте:
 ```
-MOONSHOT_API_KEY=sk-...        # Kimi K2.6 — основная модель для всех агентов
-OPENAI_API_KEY=sk-...          # GPT-4o — опционально, для параллельного Solution Design
-CONFLUENCE_TOKEN=...            # Confluence MCP (опционально)
-JIRA_TOKEN=...                  # Jira MCP (опционально)
+CONFLUENCE_TOKEN=...   # Confluence MCP
+JIRA_TOKEN=...         # Jira MCP
 ```
 
 ### MCP-серверы (опционально, но рекомендуется)
@@ -375,12 +382,25 @@ python3 requirements_runner.py resume output_dir/ --force-step critic:r2
 Генерируется автоматически при первом запуске. Редактируйте для назначения конкретных моделей конкретным агентам:
 
 ```yaml
+# Kimi везде (по умолчанию)
+models: {}
+
+# Оптимизация стоимости: DeepSeek для объёма, Kimi для качества
 models:
-  source_processor:         kimi/kimi-k2.6    # по умолчанию
+  source_processor:         deepseek/deepseek-chat   # дёшево, большой объём
+  arch_probe:               kimi/kimi-k2.6
   requirements_writer:      kimi/kimi-k2.6
-  requirements_critic:      openai/gpt-4o     # другая модель для критика
+  requirements_critic:      deepseek/deepseek-chat
   solution_designer:        kimi/kimi-k2.6
-  solution_design_critic:   openai/gpt-4o
+  solution_design_critic:   openai/gpt-4o            # сильный критик
+
+# Смешанный: Kimi + Claude на критически важных агентах
+models:
+  source_processor:         deepseek/deepseek-chat
+  requirements_writer:      anthropic/claude-sonnet-4-6
+  requirements_critic:      anthropic/claude-sonnet-4-6
+  solution_designer:        kimi/kimi-k2.6
+  solution_design_critic:   anthropic/claude-sonnet-4-6
 ```
 
 Пустой `models: {}` → все агенты используют `DEFAULT_MODEL = kimi/kimi-k2.6`.

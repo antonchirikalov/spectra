@@ -39,7 +39,7 @@ python3 -m venv .venv && .venv/bin/pip install loguru pyyaml
 
 # Configure
 cp .env.example .env
-# → add MOONSHOT_API_KEY and OPENAI_API_KEY to .env
+# → add at least one AI provider key (MOONSHOT_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, …)
 
 # Run requirements extraction
 .venv/bin/python3 requirements_runner.py run /path/to/input/folder
@@ -81,8 +81,7 @@ cp .env.example .env
 
 - Python 3.11+
 - [opencode](https://opencode.ai) CLI — `brew install anomalyco/tap/opencode`
-- `MOONSHOT_API_KEY` — from [platform.moonshot.ai](https://platform.moonshot.ai)
-- `OPENAI_API_KEY` — from [platform.openai.com](https://platform.openai.com) (optional, for multi-model designs)
+- At least one AI provider API key (see table below)
 
 ### Environment
 
@@ -90,13 +89,21 @@ cp .env.example .env
 cp .env.example .env
 ```
 
-Edit `.env`:
+Edit `.env` — add keys for the providers you want to use:
 
+| Provider | Key | Models | Notes |
+|---|---|---|---|
+| Moonshot | `MOONSHOT_API_KEY` | `kimi/kimi-k2.6` | Default — best agentic benchmark |
+| OpenAI | `OPENAI_API_KEY` | `openai/gpt-4o`, `openai/gpt-4.1` | Good for critic agents |
+| DeepSeek | `DEEPSEEK_API_KEY` | `deepseek/deepseek-chat`, `deepseek/deepseek-reasoner` | Cheapest for high volume |
+| Qwen | `QWEN_API_KEY` | `qwen/qwen3.6-plus` | 1M context, large doc sets |
+| Anthropic | `ANTHROPIC_API_KEY` | `anthropic/claude-sonnet-4-6` | Via `claude` CLI |
+| Fireworks | `FIREWORKS_API_KEY` | `kimi/kimi-k2.6`, any open weight | US-hosted, data residency |
+
+Also add if using integrations:
 ```
-MOONSHOT_API_KEY=sk-...        # Kimi K2.6 — main model for all agents
-OPENAI_API_KEY=sk-...          # GPT-4o — optional, for parallel solution design
-CONFLUENCE_TOKEN=...            # Confluence MCP (optional)
-JIRA_TOKEN=...                  # Jira MCP (optional)
+CONFLUENCE_TOKEN=...   # Confluence MCP
+JIRA_TOKEN=...         # Jira MCP
 ```
 
 ### MCP Servers (optional but recommended)
@@ -375,12 +382,25 @@ All models use `provider/model-id` format. The runner passes it to `opencode run
 Generated automatically on first run. Edit to route specific agents to specific models:
 
 ```yaml
+# Kimi everywhere (default)
+models: {}
+
+# Cost-optimised: DeepSeek for volume, Kimi for quality
 models:
-  source_processor:         kimi/kimi-k2.6    # default
+  source_processor:         deepseek/deepseek-chat   # cheapest, high volume
+  arch_probe:               kimi/kimi-k2.6
   requirements_writer:      kimi/kimi-k2.6
-  requirements_critic:      openai/gpt-4o     # override for critic
+  requirements_critic:      deepseek/deepseek-chat
   solution_designer:        kimi/kimi-k2.6
-  solution_design_critic:   openai/gpt-4o
+  solution_design_critic:   openai/gpt-4o            # strong critic
+
+# Mixed: Kimi + Claude on quality-critical agents
+models:
+  source_processor:         deepseek/deepseek-chat
+  requirements_writer:      anthropic/claude-sonnet-4-6
+  requirements_critic:      anthropic/claude-sonnet-4-6
+  solution_designer:        kimi/kimi-k2.6
+  solution_design_critic:   anthropic/claude-sonnet-4-6
 ```
 
 Empty `models: {}` → all agents use `DEFAULT_MODEL = kimi/kimi-k2.6`.
