@@ -35,6 +35,10 @@ All fields except `source_file` and `source_type` are optional — include only 
 
   "trust_level": "formal_decision | explicit_statement | transcript | chat | notes",
 
+  "files_processed": [
+    "list of file paths actually read — required for subfolder entries, optional for single files"
+  ],
+
   "needs_clarification": false,
   "clarification_request": "string — what context is missing (only if needs_clarification is true)"
 }

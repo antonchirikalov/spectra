@@ -26,6 +26,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -33,6 +34,25 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from loguru import logger
+
+
+def _load_dotenv(env_path: Path) -> None:
+    """Load .env into os.environ so subprocesses (opencode) inherit the vars."""
+    if not env_path.exists():
+        return
+    with env_path.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = val
+
+
+_load_dotenv(Path(__file__).resolve().parent / ".env")
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 VERSION = "1.0.0"
@@ -42,9 +62,22 @@ MAX_CRITIC_ROUNDS = 5
 MIN_OUTPUT_BYTES = 200
 DEFAULT_MODEL = "kimi/kimi-k2.6"
 
+# On Windows, subprocess can't find .cmd wrappers without shell=True — resolve once.
+def _find_opencode() -> str:
+    import shutil
+    if sys.platform == "win32":
+        return shutil.which("opencode.cmd") or shutil.which("opencode") or "opencode.cmd"
+    return shutil.which("opencode") or "opencode"
+
+OPENCODE_EXE = _find_opencode()
+
 SUPPORTED_EXT = {".md", ".txt", ".docx", ".xlsx", ".pptx",
                  ".pdf", ".png", ".jpg", ".jpeg", ".webp"}
 EXCLUDED_DIRS = {"plan", ".git", ".github", "__pycache__", ".venv", "outputs"}
+EXCLUDED_FILE_PREFIXES = ("~$",)
+
+def _is_excluded_file(name: str) -> bool:
+    return any(name.startswith(p) for p in EXCLUDED_FILE_PREFIXES)
 
 logger.remove()
 
@@ -84,7 +117,7 @@ class Ledger:
     def _save(self):
         self._state["updated_at"] = self._now()
         tmp = self._path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self._state, ensure_ascii=False, indent=2))
+        tmp.write_text(json.dumps(self._state, ensure_ascii=False, indent=2), encoding="utf-8")
         os.replace(tmp, self._path)
 
     @classmethod
@@ -108,7 +141,7 @@ class Ledger:
     @classmethod
     def load(cls, path: Path) -> "Ledger":
         led = cls(path)
-        led._state = json.loads(path.read_text())
+        led._state = json.loads(path.read_text(encoding="utf-8"))
         for step in led._state.get("steps", {}).values():
             if step.get("state") == "running":
                 step["state"] = "pending"
@@ -247,11 +280,22 @@ def gate_verdict_file(path: Path) -> tuple[bool, str]:
 def check_opencode_cli() -> bool:
     try:
         result = subprocess.run(
-            ["opencode", "--version"], capture_output=True, text=True, timeout=10
+            [OPENCODE_EXE, "--version"], capture_output=True, text=True, timeout=10
         )
         return result.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
+
+
+def warmup_opencode() -> None:
+    """Run a no-op to let OpenCode initialise its SQLite database before parallel agents start."""
+    try:
+        subprocess.run(
+            [OPENCODE_EXE, "--version"],
+            capture_output=True, text=True, timeout=15, cwd=str(REPO_ROOT),
+        )
+    except Exception:
+        pass
 
 
 def check_mcp_pdf_reader() -> bool:
@@ -263,7 +307,7 @@ def check_mcp_pdf_reader() -> bool:
     for p in config_paths:
         if p.exists():
             try:
-                cfg = json.loads(p.read_text())
+                cfg = json.loads(p.read_text(encoding="utf-8"))
                 mcp = cfg.get("mcp", cfg.get("servers", {}))
                 if "pdf-reader" in mcp:
                     return True
@@ -273,8 +317,15 @@ def check_mcp_pdf_reader() -> bool:
 
 
 # ── Slug helpers ───────────────────────────────────────────────────────────────
+_GUID_DATE_RE = re.compile(r"[-_]?\d{8}[Tt]\d{6}[Zz]?[-_]?\d+[-_]?\d+")
+_TRAILING_NOISE_RE = re.compile(r"[-_]\d+$")
+
+
 def slugify(name: str) -> str:
     stem = Path(name).stem if "." in name else name
+    # strip common GUID/date suffixes from folder names
+    stem = _GUID_DATE_RE.sub("", stem)
+    stem = _TRAILING_NOISE_RE.sub("", stem)
     slug = re.sub(r"[^\w\-]", "_", stem)
     slug = re.sub(r"_+", "_", slug).strip("_").lower()
     return slug or "unnamed"
@@ -293,10 +344,21 @@ def unique_slug(name: str, existing: set) -> str:
     return slug
 
 
+def human_label(entry: dict) -> str:
+    """Human-readable label for terminal logging."""
+    path = Path(entry.get("path", ""))
+    if entry.get("kind") == "subfolder":
+        files = entry.get("files", [])
+        return f"{path.name}/ ({len(files)} file{'s' if len(files) != 1 else ''})"
+    return path.name
+
+
 # ── Phase 0: Scan ──────────────────────────────────────────────────────────────
 def detect_read_tool(ext: str) -> str:
     if ext == ".pdf":
         return "mcp_pdf-reader"
+    if ext == ".xlsx":
+        return "mcp_excel"
     if ext in {".png", ".jpg", ".jpeg", ".webp"}:
         return "vision"
     return "read"
@@ -314,7 +376,9 @@ def scan_project(project_dir: Path) -> list:
                 continue
             sub_files = [
                 f for f in sorted(item.rglob("*"))
-                if f.is_file() and f.suffix.lower() in SUPPORTED_EXT
+                if f.is_file()
+                and f.suffix.lower() in SUPPORTED_EXT
+                and not _is_excluded_file(f.name)
             ]
             if sub_files:
                 slug = unique_slug(item.name, seen_slugs)
@@ -328,7 +392,7 @@ def scan_project(project_dir: Path) -> list:
                     ],
                     "read_tool": "read",
                 })
-        elif item.is_file() and item.suffix.lower() in SUPPORTED_EXT:
+        elif item.is_file() and item.suffix.lower() in SUPPORTED_EXT and not _is_excluded_file(item.name):
             slug = unique_slug(item.name, seen_slugs)
             entries.append({
                 "kind": "file",
@@ -349,8 +413,29 @@ def build_manifest(project_dir: Path, entries: list) -> dict:
 
 
 # ── stdout parser: opencode JSON event stream ──────────────────────────────────
-def extract_assistant_text(event_output: str) -> str:
+def _detect_api_error(event_output: str | None) -> str:
+    """Look for API/auth errors in opencode JSON event stream."""
+    if not event_output:
+        return ""
+    for line in event_output.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+            if obj.get("type") == "error":
+                err = obj.get("error", {})
+                msg = err.get("data", {}).get("message") or err.get("message") or json.dumps(err)
+                return msg
+        except json.JSONDecodeError:
+            continue
+    return ""
+
+
+def extract_assistant_text(event_output: str | None) -> str:
     """Extract assistant text from opencode --format json event stream."""
+    if not event_output:
+        return ""
     text_parts = []
     for line in event_output.strip().splitlines():
         line = line.strip()
@@ -359,8 +444,13 @@ def extract_assistant_text(event_output: str) -> str:
         try:
             obj = json.loads(line)
             t = obj.get("type", "")
-            if t == "text" and "text" in obj:
-                text_parts.append(obj["text"])
+            if t == "text":
+                # text event wraps content in obj["part"]["text"]
+                part = obj.get("part", {})
+                if isinstance(part, dict) and "text" in part:
+                    text_parts.append(part["text"])
+                elif "text" in obj:
+                    text_parts.append(obj["text"])
             elif t == "assistant":
                 content = obj.get("content", "")
                 if isinstance(content, str):
@@ -378,24 +468,52 @@ def extract_assistant_text(event_output: str) -> str:
     return "".join(text_parts) or event_output.strip()
 
 
+def _looks_like_extract(obj: dict) -> bool:
+    """Heuristic: an extract JSON should have source_file/source_type/requirements/topics."""
+    return any(k in obj for k in ("source_file", "source_type", "requirements", "topics"))
+
+
 def parse_json_from_text(text: str) -> dict:
-    """Extract first JSON object from agent response text."""
+    """Extract the JSON object that looks like a source extract from agent response text."""
     decoder = json.JSONDecoder()
-    m = re.search(r"```json\s*(\{.*?)\s*```", text, re.DOTALL)
-    if m:
+
+    # 1. Try every ```json ... ``` code block, prefer ones that look like extracts.
+    code_blocks = list(re.finditer(r"```json\s*(\{.*?)\s*```", text, re.DOTALL))
+    candidates = []
+    for m in code_blocks:
         try:
             obj, _ = decoder.raw_decode(m.group(1))
-            return obj
+            if isinstance(obj, dict):
+                candidates.append(obj)
         except json.JSONDecodeError:
-            pass
-    start = text.find("{")
-    if start == -1:
-        return {}
-    try:
-        obj, _ = decoder.raw_decode(text, start)
-        return obj
-    except json.JSONDecodeError:
-        return {}
+            continue
+    # Prefer candidates that look like our extract schema.
+    for obj in candidates:
+        if _looks_like_extract(obj):
+            return obj
+    if candidates:
+        return candidates[0]
+
+    # 2. Fall back to scanning top-level JSON objects in the text.
+    start = 0
+    fallback = []
+    while True:
+        start = text.find("{", start)
+        if start == -1:
+            break
+        try:
+            obj, end = decoder.raw_decode(text, start)
+            if isinstance(obj, dict):
+                fallback.append(obj)
+                if _looks_like_extract(obj):
+                    return obj
+            start = end
+        except json.JSONDecodeError:
+            start += 1
+
+    if fallback:
+        return fallback[0]
+    return {}
 
 
 # ── params.yaml ────────────────────────────────────────────────────────────────
@@ -427,31 +545,60 @@ def load_params(plan_dir: Path) -> dict:
         import yaml
         params_path = plan_dir / "params.yaml"
         if params_path.exists():
-            return yaml.safe_load(params_path.read_text()) or {}
+            return yaml.safe_load(params_path.read_text(encoding="utf-8")) or {}
     except ImportError:
         pass
     return {}
+
+
+AGENT_NAMES = [
+    "source_processor", "requirements_writer", "requirements_critic",
+    "arch_probe", "arch_critic",
+]
 
 
 def model_for(agent_name: str, params: dict) -> str:
     return (params.get("models") or {}).get(agent_name, DEFAULT_MODEL)
 
 
+def apply_cli_model(params: dict, cli_model: str) -> dict:
+    """Inject cli_model as default for any agent not already overridden in params."""
+    models = dict(params.get("models") or {})
+    for agent in AGENT_NAMES:
+        if agent not in models:
+            models[agent] = cli_model
+    return {**params, "models": models}
+
+
+def _opencode_env(slug: str) -> dict:
+    """Return isolated env vars so parallel opencode processes don't share SQLite DBs."""
+    tmpdir = tempfile.mkdtemp(prefix=f"opencode_{slug}_")
+    env = os.environ.copy()
+    env["APPDATA"] = tmpdir
+    env["LOCALAPPDATA"] = tmpdir
+    env["XDG_CONFIG_HOME"] = tmpdir
+    env["XDG_DATA_HOME"] = tmpdir
+    return env
+
+
 # ── Heartbeat ──────────────────────────────────────────────────────────────────
-def _run_with_heartbeat(cmd: list, slug: str, cwd: str, timeout: int) -> subprocess.CompletedProcess:
+def _run_with_heartbeat(cmd: list, slug: str, cwd: str, timeout: int,
+                        env: dict = None, label: str = None) -> subprocess.CompletedProcess:
     stop = threading.Event()
+    display = f"{slug} — {label}" if label else slug
 
     def _beat():
         t0 = datetime.now()
         while not stop.wait(10):
             elapsed = int((datetime.now() - t0).total_seconds())
-            print(f"[{datetime.now():%H:%M:%S}] [{slug}] running... "
+            print(f"[{datetime.now():%H:%M:%S}] [{display}] running... "
                   f"{elapsed}s elapsed, timeout in {timeout - elapsed}s", flush=True)
 
     threading.Thread(target=_beat, daemon=True).start()
     try:
         return subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd
+            cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd, env=env,
+            encoding="utf-8", errors="replace",
         )
     finally:
         stop.set()
@@ -459,47 +606,84 @@ def _run_with_heartbeat(cmd: list, slug: str, cwd: str, timeout: int) -> subproc
 
 # ── Agent runners ──────────────────────────────────────────────────────────────
 def run_agent(agent_name: str, prompt_file: Path, slug: str,
-              model: str = None, project_dir: Path = None) -> AgentResult:
-    """Run agent and parse JSON from its stdout (used for source_processor)."""
+              model: str = None, project_dir: Path = None,
+              max_retries: int = 1, label: str = None) -> AgentResult:
+    """Run agent and parse JSON from its stdout (used for source_processor).
+    Retries on empty output or transient process errors."""
     m = model or DEFAULT_MODEL
     cmd = [
-        "opencode", "run",
+        OPENCODE_EXE, "run",
         "--agent", agent_name,
         "--model", m,
         "--format", "json",
         "--dangerously-skip-permissions",
         f"Read your task from: {prompt_file}",
     ]
-    cwd = str(project_dir or REPO_ROOT)
-    logger.info(f"[{slug}] Starting agent ({m})")
-    logger.debug(f"[{slug}] cmd: {' '.join(cmd)}")
-    print(f"[{datetime.now():%H:%M:%S}] [{slug}] start", flush=True)
+    cwd = str(REPO_ROOT)  # always run from spectra root so .opencode/agents/ is found
 
-    try:
-        proc = _run_with_heartbeat(cmd, slug, cwd, AGENT_TIMEOUT_S)
-    except subprocess.TimeoutExpired:
-        logger.error(f"[{slug}] Timed out after {AGENT_TIMEOUT_S}s")
-        return AgentResult(slug=slug, success=False, raw_text="",
-                           parsed_json={}, error="timeout")
+    for attempt in range(max_retries + 1):
+        display = f"{slug} — {label}" if label else slug
+        logger.info(f"[{slug}] Starting agent ({m}) attempt {attempt + 1}/{max_retries + 1}")
+        logger.debug(f"[{slug}] cmd: {' '.join(cmd)}")
+        print(f"[{datetime.now():%H:%M:%S}] [{display}] start (attempt {attempt + 1})", flush=True)
 
-    logger.debug(f"[{slug}] exit {proc.returncode}, stdout {len(proc.stdout)} chars")
-    if proc.returncode != 0:
-        err = proc.stderr.strip() or f"exit code {proc.returncode}"
-        logger.error(f"[{slug}] Agent failed: {err}")
-        return AgentResult(slug=slug, success=False, raw_text=proc.stdout,
-                           parsed_json={}, error=err, event_log=proc.stdout)
+        try:
+            proc = _run_with_heartbeat(cmd, slug, cwd, AGENT_TIMEOUT_S,
+                                       env=_opencode_env(slug), label=label)
+        except subprocess.TimeoutExpired:
+            logger.error(f"[{slug}] Timed out after {AGENT_TIMEOUT_S}s")
+            if attempt == max_retries:
+                return AgentResult(slug=slug, success=False, raw_text="",
+                                   parsed_json={}, error="timeout")
+            continue
 
-    raw = extract_assistant_text(proc.stdout)
-    parsed = parse_json_from_text(raw)
-    logger.info(f"[{slug}] Done; JSON found: {bool(parsed)}")
-    return AgentResult(
-        slug=slug,
-        success=bool(parsed),
-        raw_text=raw,
-        parsed_json=parsed,
-        error="" if parsed else "no valid JSON in response",
-        event_log=proc.stdout,
-    )
+        stdout = proc.stdout or ""
+        stderr = proc.stderr or ""
+        logger.debug(f"[{slug}] exit {proc.returncode}, stdout {len(stdout)} chars")
+        if proc.returncode != 0:
+            err = stderr.strip() or f"exit code {proc.returncode}"
+            logger.error(f"[{slug}] Agent failed: {err}")
+            if attempt == max_retries:
+                return AgentResult(slug=slug, success=False, raw_text=stdout,
+                                   parsed_json={}, error=err, event_log=stdout)
+            continue
+
+        api_err = _detect_api_error(stdout)
+        if api_err:
+            logger.error(f"[{slug}] API error from opencode stream: {api_err}")
+            return AgentResult(slug=slug, success=False, raw_text=stdout,
+                               parsed_json={}, error=f"api error: {api_err}",
+                               event_log=stdout)
+
+        raw = extract_assistant_text(stdout)
+        parsed = parse_json_from_text(raw)
+        if parsed:
+            logger.info(f"[{slug}] Done; JSON found: True")
+            return AgentResult(
+                slug=slug,
+                success=True,
+                raw_text=raw,
+                parsed_json=parsed,
+                error="",
+                event_log=stdout,
+            )
+
+        logger.warning(f"[{slug}] No JSON in response (attempt {attempt + 1})")
+        if attempt == max_retries:
+            return AgentResult(
+                slug=slug,
+                success=False,
+                raw_text=raw,
+                parsed_json={},
+                error="no valid JSON in response",
+                event_log=stdout,
+            )
+        # brief pause before retry to let opencode clean up
+        import time
+        time.sleep(2)
+
+    return AgentResult(slug=slug, success=False, raw_text="",
+                       parsed_json={}, error="exhausted retries")
 
 
 def run_agent_write(agent_name: str, prompt_file: Path, slug: str,
@@ -509,35 +693,50 @@ def run_agent_write(agent_name: str, prompt_file: Path, slug: str,
     Returns (success, event_log)."""
     m = model or DEFAULT_MODEL
     cmd = [
-        "opencode", "run",
+        OPENCODE_EXE, "run",
         "--agent", agent_name,
         "--model", m,
         "--format", "json",
         "--dangerously-skip-permissions",
         f"Read your task from: {prompt_file}",
     ]
-    cwd = str(project_dir or REPO_ROOT)
+    cwd = str(REPO_ROOT)  # always run from spectra root so .opencode/agents/ is found
     logger.info(f"[{slug}] Starting agent write-mode ({m}) → {output_path.name}")
     logger.debug(f"[{slug}] cmd: {' '.join(cmd)}")
     print(f"[{datetime.now():%H:%M:%S}] [{slug}] start", flush=True)
 
     try:
-        proc = _run_with_heartbeat(cmd, slug, cwd, AGENT_TIMEOUT_S)
+        proc = _run_with_heartbeat(cmd, slug, cwd, AGENT_TIMEOUT_S, env=_opencode_env(slug))
     except subprocess.TimeoutExpired:
         logger.error(f"[{slug}] Timed out after {AGENT_TIMEOUT_S}s")
         return False, ""
 
+    stdout = proc.stdout or ""
+    stderr = proc.stderr or ""
     logger.debug(f"[{slug}] exit {proc.returncode}")
     if proc.returncode != 0:
-        err = proc.stderr.strip() or f"exit code {proc.returncode}"
+        err = stderr.strip() or f"exit code {proc.returncode}"
         logger.error(f"[{slug}] Agent failed: {err}")
-        return False, proc.stdout
+        return False, stdout
+
+    api_err = _detect_api_error(stdout)
+    if api_err:
+        logger.error(f"[{slug}] API error from opencode stream: {api_err}")
+        return False, stdout
 
     logger.info(f"[{slug}] Agent process finished")
-    return True, proc.stdout
+    return True, stdout
 
 
 # ── Phase 1: Prompt rendering ──────────────────────────────────────────────────
+def _load_prompt_asset(rel_path: str) -> str:
+    """Load a prompt asset from the spectra prompts directory."""
+    path = REPO_ROOT / "prompts" / rel_path
+    if path.exists():
+        return path.read_text(encoding="utf-8")
+    return f"(asset not found: {rel_path})"
+
+
 PROMPT_TEMPLATE = """\
 # Source Extraction Task
 
@@ -553,11 +752,12 @@ PROMPT_TEMPLATE = """\
 {clarification_block}
 ## Output Schema
 
-Read: `prompts/source_processor/output_schema.md`
+{_output_schema}
 
 ## Strategies
 
-Read: `prompts/source_processor/strategies/`
+{_strategies}
+{subfolder_note}
 """
 
 
@@ -590,23 +790,43 @@ def render_prompt(entry: dict, clarification: str = "") -> str:
     if clarification:
         clarification_block = f"\n## User Clarification\n\n{clarification}\n"
 
+    if entry["kind"] == "subfolder":
+        file_list = "\n".join(f"- `{f['path']}`" for f in entry.get("files", []))
+        subfolder_note = (
+            "\n## Subfolder Processing Note\n\n"
+            "This entry is a subfolder. You MUST read every file listed above. "
+            "In your output JSON, set `files_processed` to the exact list of file paths you read.\n\n"
+            f"Expected files:\n{file_list}\n"
+        )
+    else:
+        subfolder_note = ""
+
     return PROMPT_TEMPLATE.format(
         document_instruction=document_instruction,
         assets_block=assets_block,
         manifest_entry_json=json.dumps(entry, indent=2, ensure_ascii=False),
         clarification_block=clarification_block,
+        _output_schema=_load_prompt_asset("source_processor/output_schema.md"),
+        _strategies="\n\n".join(
+            _load_prompt_asset(f"source_processor/strategies/{name}")
+            for name in ["brief.md", "chat.md", "pdf.md", "qa.md", "spreadsheet.md", "transcript.md"]
+        ),
+        subfolder_note=subfolder_note,
     )
 
 
 # ── Phase 1: Parallel extraction ───────────────────────────────────────────────
-def _run_agents_parallel(tasks: list, project_dir: Path) -> list:
+def _run_agents_parallel(tasks: list, project_dir: Path, max_workers: int = None) -> list:
     results = []
-    with ThreadPoolExecutor(max_workers=max(1, len(tasks))) as pool:
+    if max_workers is None:
+        max_workers = max(1, min(3, len(tasks)))
+    with ThreadPoolExecutor(max_workers=max(1, min(max_workers, len(tasks)))) as pool:
         future_to_task = {
             pool.submit(
                 run_agent,
                 t["agent"], t["prompt_file"], t["slug"],
                 model=t.get("model"), project_dir=project_dir,
+                label=t.get("label"),
             ): t
             for t in tasks
         }
@@ -616,13 +836,15 @@ def _run_agents_parallel(tasks: list, project_dir: Path) -> list:
                 result = future.result()
                 results.append(result)
                 status = "ok" if result.success else f"failed ({result.error})"
-                print(f"[PHASE:1] {result.slug}: {status}")
+                label = task.get("label") or result.slug
+                print(f"[PHASE:1] {label}: {status}")
             except Exception as e:
                 slug = task["slug"]
+                label = task.get("label") or slug
                 logger.error(f"[{slug}] Unexpected exception: {e}")
                 results.append(AgentResult(slug=slug, success=False, raw_text="",
                                            parsed_json={}, error=str(e)))
-                print(f"[PHASE:1] {slug}: failed (exception)")
+                print(f"[PHASE:1] {label}: failed (exception)")
     return results
 
 
@@ -631,16 +853,16 @@ def _save_extract(result: AgentResult, artifacts_dir: Path):
     extract_dir.mkdir(parents=True, exist_ok=True)
     if result.success and result.parsed_json:
         (extract_dir / "extract.json").write_text(
-            json.dumps(result.parsed_json, ensure_ascii=False, indent=2)
+            json.dumps(result.parsed_json, ensure_ascii=False, indent=2), encoding="utf-8"
         )
     else:
         (extract_dir / "extract.error.json").write_text(
             json.dumps({"error": result.error, "partial_raw": result.raw_text[:2000]},
-                       ensure_ascii=False, indent=2)
+                       ensure_ascii=False, indent=2), encoding="utf-8"
         )
-    (extract_dir / "raw.txt").write_text(result.raw_text or "")
+    (extract_dir / "raw.txt").write_text(result.raw_text or "", encoding="utf-8")
     if result.event_log:
-        (extract_dir / "agent.events.jsonl").write_text(result.event_log)
+        (extract_dir / "agent.events.jsonl").write_text(result.event_log, encoding="utf-8")
 
 
 def _collect_clarifications(results: list) -> list:
@@ -680,7 +902,8 @@ def _hitl_clarify(flagged: list, interactive: bool) -> dict:
 
 
 def run_phase1(entries: list, project_dir: Path, artifacts_dir: Path,
-               params: dict, interactive: bool, ledger: Ledger = None) -> list:
+               params: dict, interactive: bool, ledger: Ledger = None,
+               max_workers: int = 1) -> list:
     prompts_dir = artifacts_dir / "prompts"
     prompts_dir.mkdir(parents=True, exist_ok=True)
 
@@ -692,7 +915,7 @@ def run_phase1(entries: list, project_dir: Path, artifacts_dir: Path,
         if ledger and ledger.is_done(f"extract:{slug}", artifact_path, gate_extract_file):
             print(f"[PHASE:1] [{slug}] skipping — already done")
             try:
-                parsed_json = json.loads(artifact_path.read_text())
+                parsed_json = json.loads(artifact_path.read_text(encoding="utf-8"))
             except Exception:
                 parsed_json = {}
             already_done.append(AgentResult(slug=slug, success=True, raw_text="",
@@ -704,6 +927,7 @@ def run_phase1(entries: list, project_dir: Path, artifacts_dir: Path,
         tasks.append({
             "agent": "source_processor",
             "slug": slug,
+            "label": human_label(entry),
             "prompt_file": prompt_file,
             "model": model_for("source_processor", params),
         })
@@ -714,9 +938,18 @@ def run_phase1(entries: list, project_dir: Path, artifacts_dir: Path,
         if ledger:
             for t in tasks:
                 ledger.mark_running(f"extract:{t['slug']}")
-        new_results = _run_agents_parallel(tasks, project_dir)
+        new_results = _run_agents_parallel(tasks, project_dir, max_workers=max_workers)
         for r in new_results:
             _save_extract(r, artifacts_dir)
+            # Warn if a subfolder agent did not report processing all expected files.
+            entry = next((e for e in entries if e["slug"] == r.slug), None)
+            if entry and entry.get("kind") == "subfolder" and r.success and r.parsed_json:
+                expected = {str(Path(f["path"]).resolve()) for f in entry.get("files", [])}
+                processed = {str(Path(p).resolve()) for p in r.parsed_json.get("files_processed", [])}
+                missing = expected - processed
+                if missing:
+                    label = human_label(entry)
+                    print(f"[WARN] {label}: agent did not report processing {len(missing)} file(s): {missing}")
             if ledger:
                 artifact = artifacts_dir / "extracts" / r.slug / "extract.json"
                 if r.success:
@@ -749,11 +982,12 @@ def run_phase1(entries: list, project_dir: Path, artifacts_dir: Path,
             retry_tasks.append({
                 "agent": "source_processor",
                 "slug": slug,
+                "label": human_label(entry) + " (retry)",
                 "prompt_file": prompt_file,
                 "model": model_for("source_processor", params),
             })
         if retry_tasks:
-            retry_results = _run_agents_parallel(retry_tasks, project_dir)
+            retry_results = _run_agents_parallel(retry_tasks, project_dir, max_workers=max_workers)
             for rr in retry_results:
                 _save_extract(rr, artifacts_dir)
             result_map = {r.slug: r for r in results}
@@ -846,7 +1080,7 @@ def run_phase2(results: list, artifacts_dir: Path, project_dir: Path,
     log_dir = artifacts_dir / "extracts" / "_requirements_writer"
     log_dir.mkdir(parents=True, exist_ok=True)
     if event_log:
-        (log_dir / "agent.events.jsonl").write_text(event_log)
+        (log_dir / "agent.events.jsonl").write_text(event_log, encoding="utf-8")
 
     if not ok:
         print("[PHASE:2] FAILED — agent process error")
@@ -937,7 +1171,7 @@ def run_phase3_critic_loop(
                 project_dir=project_dir,
             )
             if event_log:
-                (verdict_path.parent / "agent.events.jsonl").write_text(event_log)
+                (verdict_path.parent / "agent.events.jsonl").write_text(event_log, encoding="utf-8")
 
             if not ok or not verdict_path.exists():
                 print(f"[PHASE:3] WARNING — critic failed (round {round_num}), continuing")
@@ -996,7 +1230,7 @@ def run_phase3_critic_loop(
         log_dir = artifacts_dir / "extracts" / f"_requirements_writer_r{round_num + 1}"
         log_dir.mkdir(parents=True, exist_ok=True)
         if w_log:
-            (log_dir / "agent.events.jsonl").write_text(w_log)
+            (log_dir / "agent.events.jsonl").write_text(w_log, encoding="utf-8")
 
         if not w_ok:
             print(f"[PHASE:3] WARNING — writer revision failed (round {round_num + 1})")
@@ -1032,9 +1266,9 @@ DISCOVERY_CRITIC_TEMPLATE = """\
 """
 
 
-def run_discovery(project_dir: Path, interactive: bool) -> int:
+def run_discovery(project_dir: Path, interactive: bool, cli_model: str = None) -> int:
     run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = project_dir.parent / f"discovery_{run_ts}"
+    output_dir = project_dir.parent / f"spectra_reqs_discovery_{run_ts}"
     artifacts_dir = output_dir / f"_artifacts_{run_ts}"
     plan_dir = output_dir / "plan"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1048,6 +1282,9 @@ def run_discovery(project_dir: Path, interactive: bool) -> int:
 
     create_default_params(plan_dir)
     params = load_params(plan_dir)
+    if cli_model:
+        params = apply_cli_model(params, cli_model)
+        print(f"[INFO] CLI model override: {cli_model}")
 
     print(f"[PHASE:0] Scanning {project_dir} ...")
     entries = scan_project(project_dir)
@@ -1059,8 +1296,9 @@ def run_discovery(project_dir: Path, interactive: bool) -> int:
     manifest = build_manifest(project_dir, entries)
     intake_dir = artifacts_dir / "intake"
     intake_dir.mkdir(parents=True, exist_ok=True)
-    (intake_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
+    (intake_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    warmup_opencode()
     print("[PHASE:1] Starting source extraction ...")
     results = run_phase1(entries, project_dir, artifacts_dir, params, interactive)
 
@@ -1097,16 +1335,16 @@ def run_discovery(project_dir: Path, interactive: bool) -> int:
 
     probe_dir = extracts_dir / "_arch_probe"
     probe_dir.mkdir(parents=True, exist_ok=True)
-    (probe_dir / "raw.txt").write_text(probe_result.raw_text or "")
+    (probe_dir / "raw.txt").write_text(probe_result.raw_text or "", encoding="utf-8")
     if probe_result.event_log:
-        (probe_dir / "agent.events.jsonl").write_text(probe_result.event_log)
+        (probe_dir / "agent.events.jsonl").write_text(probe_result.event_log, encoding="utf-8")
 
     if not probe_result.success or not probe_result.parsed_json:
         print(f"[PHASE:D1] FAILED — {probe_result.error}")
         return 1
 
     probe_output_path = probe_dir / "probe_output.json"
-    probe_output_path.write_text(json.dumps(probe_result.parsed_json, ensure_ascii=False, indent=2))
+    probe_output_path.write_text(json.dumps(probe_result.parsed_json, ensure_ascii=False, indent=2), encoding="utf-8")
     q_count = len(probe_result.parsed_json.get("raw_questions", []))
     print(f"[PHASE:D1] Done — {q_count} raw question(s)")
 
@@ -1130,7 +1368,7 @@ def run_discovery(project_dir: Path, interactive: bool) -> int:
     critic_dir = extracts_dir / "_arch_critic"
     critic_dir.mkdir(parents=True, exist_ok=True)
     if event_log:
-        (critic_dir / "agent.events.jsonl").write_text(event_log)
+        (critic_dir / "agent.events.jsonl").write_text(event_log, encoding="utf-8")
 
     if not ok_c or not output_path.exists() or output_path.stat().st_size < 200:
         print("[PHASE:D2] FAILED — agent did not write discovery_report.md")
@@ -1182,7 +1420,8 @@ def cmd_status(output_dir: Path) -> int:
 
 
 def cmd_resume(output_dir: Path, retry_failed: bool = False,
-               force_step: str | None = None) -> int:
+               force_step: str | None = None, cli_model: str = None,
+               max_workers: int = 1) -> int:
     state_path = output_dir / "state.json"
     if not state_path.exists():
         print(f"[ERROR] No state.json found in {output_dir}", file=sys.stderr)
@@ -1223,13 +1462,17 @@ def cmd_resume(output_dir: Path, retry_failed: bool = False,
     plan_dir = output_dir / "plan"
     create_default_params(plan_dir)
     params = load_params(plan_dir)
+    if cli_model:
+        params = apply_cli_model(params, cli_model)
+        print(f"[INFO] CLI model override: {cli_model}")
 
     entries = scan_project(project_dir)
     if not entries:
         print("[ERROR] No supported files found.", file=sys.stderr)
         return 1
 
-    results = run_phase1(entries, project_dir, artifacts_dir, params, False, ledger=ledger)
+    results = run_phase1(entries, project_dir, artifacts_dir, params, False,
+                         ledger=ledger, max_workers=max_workers)
     ok = sum(1 for r in results if r.success)
     failed = sum(1 for r in results if not r.success)
     print(f"[RESUME] Extraction: {ok} ok, {failed} failed.")
@@ -1258,6 +1501,12 @@ def cmd_resume(output_dir: Path, retry_failed: bool = False,
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 def main():
+    # Windows CMD defaults to cp1252; force UTF-8 so Unicode arrows/boxes print safely.
+    if sys.platform == "win32":
+        import io
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+
     parser = argparse.ArgumentParser(description="spectra requirements runner")
     sub = parser.add_subparsers(dest="command")
 
@@ -1266,12 +1515,30 @@ def main():
     run_p.add_argument("--interactive", action="store_true", default=False)
     run_p.add_argument("--mode", choices=["extract", "discovery"], default="extract")
     run_p.add_argument("--debug", action="store_true", default=False)
+    run_p.add_argument(
+        "--workers", type=int, default=None, metavar="N",
+        help="Max parallel source_processor agents (default: all at once). "
+             "Lower if opencode still hits 'database is locked'.",
+    )
+    run_p.add_argument(
+        "--model", metavar="MODEL", default=None,
+        help=f"Model for all agents (default: {DEFAULT_MODEL}). "
+             "Per-agent overrides in params.yaml take precedence.",
+    )
 
     res_p = sub.add_parser("resume", help="Resume an interrupted run")
     res_p.add_argument("output_dir", type=Path)
     res_p.add_argument("--retry-failed", action="store_true")
     res_p.add_argument("--force-step", metavar="STEP_ID")
     res_p.add_argument("--debug", action="store_true", default=False)
+    res_p.add_argument(
+        "--workers", type=int, default=None, metavar="N",
+        help="Max parallel source_processor agents on resume (default: all at once).",
+    )
+    res_p.add_argument(
+        "--model", metavar="MODEL", default=None,
+        help="Override model for all agents on resume.",
+    )
 
     sta_p = sub.add_parser("status", help="Show run state")
     sta_p.add_argument("output_dir", type=Path)
@@ -1288,7 +1555,9 @@ def main():
     if args.command == "resume":
         return cmd_resume(args.output_dir.resolve(),
                           retry_failed=args.retry_failed,
-                          force_step=args.force_step)
+                          force_step=args.force_step,
+                          cli_model=getattr(args, "model", None),
+                          max_workers=getattr(args, "workers", 1))
 
     if args.command != "run":
         parser.print_help()
@@ -1300,10 +1569,11 @@ def main():
         return 1
 
     if args.mode == "discovery":
-        return run_discovery(project_dir, args.interactive)
+        return run_discovery(project_dir, args.interactive,
+                             cli_model=getattr(args, "model", None))
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = project_dir.parent / f"requirements_{run_id}"
+    output_dir = project_dir.parent / f"spectra_reqs_{run_id}"
     artifacts_dir = output_dir / f"_artifacts_{run_id}"
     plan_dir = output_dir / "plan"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1319,6 +1589,9 @@ def main():
 
     create_default_params(plan_dir)
     params = load_params(plan_dir)
+    if args.model:
+        params = apply_cli_model(params, args.model)
+        print(f"[INFO] CLI model override: {args.model}")
 
     print(f"[PHASE:0] Scanning {project_dir} ...")
     entries = scan_project(project_dir)
@@ -1333,16 +1606,17 @@ def main():
     manifest = build_manifest(project_dir, entries)
     intake_dir = artifacts_dir / "intake"
     intake_dir.mkdir(parents=True, exist_ok=True)
-    (intake_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
+    (intake_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"[PHASE:0] Manifest → {intake_dir / 'manifest.json'}")
 
     if any(e.get("read_tool") == "mcp_pdf-reader" for e in entries):
         if not check_mcp_pdf_reader():
             print("[WARN] pdf-reader MCP not found in opencode.json — PDFs may fail.")
 
+    warmup_opencode()
     print("[PHASE:1] Starting source extraction ...")
     results = run_phase1(entries, project_dir, artifacts_dir, params,
-                         args.interactive, ledger=ledger)
+                         args.interactive, ledger=ledger, max_workers=args.workers)
 
     ok = sum(1 for r in results if r.success)
     failed = sum(1 for r in results if not r.success)

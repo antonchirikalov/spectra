@@ -7,3 +7,11 @@ outputs/
 requirements_*/
 discovery_*/
 solution_design_*/
+
+# Temporary artifacts created by opencode agents / debugging
+extract_docs*.py
+read_excel.py
+temp_*/
+tmp_*/
+*.pdf
+~$*

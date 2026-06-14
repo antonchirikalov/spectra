@@ -4,20 +4,12 @@ Use this strategy for Excel files (`.xlsx`) and any table-heavy documents — bu
 
 ## What you receive
 
-The Python runner pre-parses `.xlsx` files with `openpyxl (data_only=True)` and saves the result as a JSON file structured as:
+The manifest entry's `read_tool` field will be `mcp_excel`. Use the `excel` MCP server tools to read the file:
 
-```json
-{
-  "Sheet1": [
-    ["Header1", "Header2", "Header3"],
-    ["row1col1", "row1col2", "row1col3"],
-    ...
-  ],
-  "Sheet2": [...]
-}
-```
+- Call `read_sheet_names` (or equivalent) to list sheets
+- Call `read_sheet_data` (or equivalent) to read each sheet's contents
 
-Read this JSON file using the `read` tool. The path is provided in the manifest entry's `parsed` field.
+The file path is in the manifest entry's `path` field.
 
 ## Extraction focus
 
