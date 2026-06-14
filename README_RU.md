@@ -31,11 +31,13 @@
 
 ## Быстрый старт
 
+### macOS / Linux
+
 ```bash
 # Клонировать и настроить
 git clone <repo>
 cd spectra
-python3 -m venv .venv && .venv/bin/pip install loguru pyyaml
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 # Настроить окружение
 cp .env.example .env
@@ -71,6 +73,44 @@ cp .env.example .env
 # Принудительно перезапустить конкретный шаг
 .venv/bin/python3 requirements_runner.py resume \
   /путь/до/requirements_YYYYMMDD_HHMMSS --force-step critic:r2
+```
+
+### Windows (CMD / PowerShell)
+
+```powershell
+# Клонировать и настроить
+git clone <repo>
+cd spectra
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+
+# Настроить окружение
+copy .env.example .env
+# → добавить хотя бы один ключ провайдера (MOONSHOT_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, …)
+
+# Запустить извлечение требований
+.venv\Scripts\python requirements_runner.py run C:\путь\до\папки\с\документами
+
+# Использовать конкретную модель
+.venv\Scripts\python requirements_runner.py run C:\путь\до\папки\с\документами --model openai/gpt-4.1
+
+# Ограничить параллелизм (по умолчанию 3)
+.venv\Scripts\python requirements_runner.py run C:\путь\до\папки\с\документами --workers 2
+
+# Запустить в режиме Discovery
+.venv\Scripts\python requirements_runner.py run C:\путь\до\папки\с\документами --mode discovery
+
+# Запустить Solution Design (после извлечения)
+.venv\Scripts\python solution_design_runner.py run `
+  C:\путь\до\requirements_YYYYMMDD_HHMMSS\_requirements.md
+
+# Проверить статус запуска
+.venv\Scripts\python requirements_runner.py status `
+  C:\путь\до\requirements_YYYYMMDD_HHMMSS
+
+# Возобновить прерванный запуск
+.venv\Scripts\python requirements_runner.py resume `
+  C:\путь\до\requirements_YYYYMMDD_HHMMSS --retry-failed
 ```
 
 ---
@@ -116,6 +156,23 @@ JIRA_TOKEN=...         # Jira MCP
 
 Настраиваются в `opencode.json` — при необходимости скорректируйте пути под свою систему.
 
+### Замечания для Windows
+
+Раннер принудительно использует UTF-8 для `print()` и вывода подпроцессов. Если в консоли всё ещё возникают `UnicodeEncodeError` или кракозябры, переключите кодовую страницу перед запуском:
+
+```cmd
+chcp 65001
+set PYTHONIOENCODING=utf-8
+.venv\Scripts\python requirements_runner.py run C:\путь\до\входных_данных
+```
+
+### Оплата провайдеров
+
+- **Moonshot / Kimi:** подписка на `kimi.com` **не равна** балансу API на `platform.moonshot.ai`. `opencode` расходует именно **API-баланс** на `platform.moonshot.ai`. Пополняйте его, если видите ошибки 401/429.
+- **OpenAI:** баланс расходуется со стандартной страницы биллинга OpenAI API.
+
+Раннер распознаёт ошибки API, которые выдаёт `opencode` (например, `database is locked`, 401/429), и помечает шаг как упавший вместо того, чтобы висеть до таймаута.
+
 ---
 
 ## Входные данные
@@ -125,7 +182,8 @@ JIRA_TOKEN=...         # Jira MCP
 | Тип файла | Способ чтения |
 |---|---|
 | `.pdf` | MCP-инструмент `pdf-reader` |
-| `.docx` / `.pptx` / `.xlsx` | Инструмент `read` |
+| `.xlsx` | MCP-сервер `excel` |
+| `.docx` / `.pptx` | `docx-mcp` / инструмент `read` |
 | `.md` / `.txt` | Инструмент `read` |
 | `.png` / `.jpg` / `.jpeg` / `.webp` | Vision (мультимодальность) |
 | Подпапки | Один логический источник (один агент на папку) |
@@ -211,11 +269,11 @@ project/
 - загружает соответствующую стратегию извлечения из `prompts/source_processor/strategies/`
 - выводит `extract.json` с: `requirements`, `decisions`, `constraints`, `open_questions`, `trust_level`
 
-Heartbeat каждые 10 секунд:
+Heartbeat каждые 10 секунд (теперь с понятным label):
 ```
-[09:01:10] [rfp-doc] start
-[09:01:20] [rfp-doc] running... 10s elapsed, timeout in 3590s
-[09:02:03] [rfp-doc] done
+[09:01:10] [rfp-doc — rfp.pdf] start
+[09:01:20] [rfp-doc — rfp.pdf] running... 10s elapsed, timeout in 3590s
+[09:02:03] [rfp-doc — rfp.pdf] done
 ```
 
 **HITL:clarify** (при `--interactive`): если агент возвращает `needs_clarification: true`, оркестратор ставится на паузу и ждёт ответа в терминале. Агент перезапускается с уточнением. До 2 раундов уточнений.
@@ -319,8 +377,12 @@ python3 solution_design_runner.py run _requirements.md \
 |---|---|---|---|
 | `run` | `project_dir` | — | Путь к папке с исходными документами |
 | `run` | `--mode` | `extract` | `extract` или `discovery` |
+| `run` | `--model` | `kimi/kimi-k2.6` | Переопределить модель для всех агентов |
+| `run` | `--workers` | 3 | Максимальное число параллельных `source_processor` |
 | `run` | `--interactive` | выкл | Остановка на HITL-контрольных точках |
 | `run` | `--debug` | выкл | Логирование уровня DEBUG в stderr |
+| `resume` | `--model` | — | Переопределить модель при возобновлении |
+| `resume` | `--workers` | 3 | Параллелизм для оставшихся extract-шагов |
 | `status` | `output_dir` | — | Таблица шагов: статус, время, попытки, артефакт/ошибка |
 | `resume` | `output_dir` | — | Продолжить с места остановки |
 | `resume` | `--retry-failed` | выкл | Сбросить все `failed` шаги в `pending` |

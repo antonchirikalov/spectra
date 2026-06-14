@@ -31,11 +31,13 @@ Two modes, same input:
 
 ## Quick Start
 
+### macOS / Linux
+
 ```bash
 # Clone and set up
 git clone <repo>
 cd spectra
-python3 -m venv .venv && .venv/bin/pip install loguru pyyaml
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 # Configure
 cp .env.example .env
@@ -71,6 +73,44 @@ cp .env.example .env
 # Force-rerun a specific step
 .venv/bin/python3 requirements_runner.py resume \
   /path/to/requirements_YYYYMMDD_HHMMSS --force-step critic:r2
+```
+
+### Windows (CMD / PowerShell)
+
+```powershell
+# Clone and set up
+git clone <repo>
+cd spectra
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+
+# Configure
+copy .env.example .env
+# → add at least one AI provider key (MOONSHOT_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, …)
+
+# Run requirements extraction
+.venv\Scripts\python requirements_runner.py run C:\path\to\input\folder
+
+# Use a specific model
+.venv\Scripts\python requirements_runner.py run C:\path\to\input\folder --model openai/gpt-4.1
+
+# Limit parallelism (default is 3)
+.venv\Scripts\python requirements_runner.py run C:\path\to\input\folder --workers 2
+
+# Run discovery mode
+.venv\Scripts\python requirements_runner.py run C:\path\to\input\folder --mode discovery
+
+# Run solution design (after extraction)
+.venv\Scripts\python solution_design_runner.py run `
+  C:\path\to\requirements_YYYYMMDD_HHMMSS\_requirements.md
+
+# Check run status
+.venv\Scripts\python requirements_runner.py status `
+  C:\path\to\requirements_YYYYMMDD_HHMMSS
+
+# Resume an interrupted run
+.venv\Scripts\python requirements_runner.py resume `
+  C:\path\to\requirements_YYYYMMDD_HHMMSS --retry-failed
 ```
 
 ---
@@ -116,6 +156,23 @@ JIRA_TOKEN=...         # Jira MCP
 
 Configured in `opencode.json` — edit paths if your system differs.
 
+### Windows Notes
+
+The runner enforces UTF-8 for `print()` and subprocess output. If your console still shows `UnicodeEncodeError` or garbled text, set the console code page before running:
+
+```cmd
+chcp 65001
+set PYTHONIOENCODING=utf-8
+.venv\Scripts\python requirements_runner.py run C:\path\to\input
+```
+
+### Provider Billing Notes
+
+- **Moonshot / Kimi:** a subscription on `kimi.com` is **not** the same as an API balance on `platform.moonshot.ai`. `opencode` consumes the **API balance** on `platform.moonshot.ai`. Top up there if you see 401/429 errors.
+- **OpenAI:** balance is consumed from the standard OpenAI API billing page.
+
+The runner detects API errors emitted by `opencode` (e.g. `database is locked`, 401/429) and marks the step as failed instead of hanging until timeout.
+
 ---
 
 ## Input
@@ -125,7 +182,8 @@ Drop any combination of files into a folder and pass it to `requirements_runner.
 | File type | How it's read |
 |---|---|
 | `.pdf` | `pdf-reader` MCP tool |
-| `.docx` / `.pptx` / `.xlsx` | `read` tool (pre-converted) |
+| `.xlsx` | `excel` MCP server |
+| `.docx` / `.pptx` | `docx-mcp` / `read` tool |
 | `.md` / `.txt` | `read` tool |
 | `.png` / `.jpg` / `.jpeg` / `.webp` | Vision (multimodal) |
 | Subfolders | Treated as one logical source (one agent per folder) |
@@ -211,11 +269,11 @@ One `source_processor` agent per manifest entry, all launched concurrently via `
 - loads the matching extraction strategy from `prompts/source_processor/strategies/`
 - outputs `extract.json` with: `requirements`, `decisions`, `constraints`, `open_questions`, `trust_level`
 
-Heartbeat printed every 10 s:
+Heartbeat printed every 10 s (now with a human-readable label):
 ```
-[09:01:10] [rfp-doc] start
-[09:01:20] [rfp-doc] running... 10s elapsed, timeout in 3590s
-[09:02:03] [rfp-doc] done
+[09:01:10] [rfp-doc — rfp.pdf] start
+[09:01:20] [rfp-doc — rfp.pdf] running... 10s elapsed, timeout in 3590s
+[09:02:03] [rfp-doc — rfp.pdf] done
 ```
 
 **HITL:clarify** (if `--interactive`): any agent returning `needs_clarification: true` pauses the runner for a terminal answer. The agent is re-run with the clarification appended. Up to 2 clarification rounds.
@@ -319,8 +377,12 @@ Prints paths to all artifacts, winning model, final verdict, and count of `<!-- 
 |---|---|---|---|
 | `run` | `project_dir` | — | Path to folder with source documents |
 | `run` | `--mode` | `extract` | `extract` or `discovery` |
+| `run` | `--model` | `kimi/kimi-k2.6` | Override model for all agents |
+| `run` | `--workers` | 3 | Max parallel `source_processor` agents |
 | `run` | `--interactive` | off | Pause at HITL checkpoints |
 | `run` | `--debug` | off | DEBUG-level logging to stderr |
+| `resume` | `--model` | — | Override model on resume |
+| `resume` | `--workers` | 3 | Parallelism for remaining extract steps |
 | `status` | `output_dir` | — | Step table: status, elapsed, tries, artifact/error |
 | `resume` | `output_dir` | — | Continue from where execution stopped |
 | `resume` | `--retry-failed` | off | Reset all `failed` steps to `pending` |
