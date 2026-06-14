@@ -45,6 +45,7 @@ Your job is to review a draft `_requirements.md` document and either approve it 
    | S12 | Section 3 FRs are grouped into domain-area subsections (not one flat table); last subsection is Out of Scope | MAJOR |
    | S13 | FR count is proportionate to project complexity (≥10 FRs for medium, ≥20 for high complexity) | MAJOR |
    | S14 | Section 8.3 (Assumptions) lists every writer assumption with an explicit basis — not just the assumption text | MINOR |
+   | S15 | No `**bold**` emphasis is used for phrases, labels, or callouts outside mandatory table headers; important notes use `> [!NOTE]`, `> [!IMPORTANT]`, `> [!WARNING]`, or `> [!CAUTION]` alerts | MAJOR |
 
 8. **Determine the verdict.**
 
@@ -72,19 +73,19 @@ VERDICT: REVISE
 ## Findings
 
 ### [CRITICAL] S1 — Missing source citations
-**Section:** 3.2 Authentication
-**Finding:** FR-011, FR-012, FR-013 have no [Source: ...] citations.
-**Required action:** Add source citations for each row. Trace back to the extract that originated each requirement.
+Section: 3.2 Authentication
+Finding: FR-011, FR-012, FR-013 have no [Source: ...] citations.
+Required action: Add source citations for each row. Trace back to the extract that originated each requirement.
 
 ### [MAJOR] S4 — Non-quantitative NFRs
-**Section:** 5. Non-Functional Requirements
-**Finding:** NFR-003 ("The system shall be performant") has no measurable target.
-**Required action:** Specify response time, throughput, or error rate with numbers and conditions.
+Section: 5. Non-Functional Requirements
+Finding: NFR-003 ("The system shall be performant") has no measurable target.
+Required action: Specify response time, throughput, or error rate with numbers and conditions.
 
 ### [MAJOR] S9 — Missing gaps
-**Section:** 8.2 Open Questions
-**Finding:** The extract for `rfp.pdf` has 3 open questions; none appear in 8.2.
-**Required action:** Add all open questions from all extracts to Section 8.2.
+Section: 8.2 Open Questions
+Finding: The extract for `rfp.pdf` has 3 open questions; none appear in 8.2.
+Required action: Add all open questions from all extracts to Section 8.2.
 ```
 
 ## Rules

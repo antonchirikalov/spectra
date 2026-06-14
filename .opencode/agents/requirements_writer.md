@@ -41,3 +41,10 @@ You are a senior business analyst. Your job is to read structured extracts produ
 - Start the file content with the YAML front-matter block (`---`). No preamble text before it.
 - Do not add any explanation or commentary after the document ends.
 - Do not truncate. Write the complete document even if it is long.
+- Do **not** use `**bold**` emphasis for phrases, labels, or callouts anywhere in the document. Bold text looks AI-generated and is not allowed.
+- For emphasis, warnings, or important callouts, use GitHub-style markdown alerts instead:
+  - `> [!NOTE]` for neutral clarifications
+  - `> [!IMPORTANT]` for high-priority statements
+  - `> [!WARNING]` for cautions
+  - `> [!CAUTION]` for things that must not happen
+- Plain text inside tables must not be wrapped in `**`.
