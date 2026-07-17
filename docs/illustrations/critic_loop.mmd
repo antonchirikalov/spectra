@@ -1,0 +1,19 @@
+flowchart TD
+    A["_requirements.md<br/>(от requirements_writer)"] --> B["requirements_critic agent"]
+    E["extracts/*/extract.json<br/>(исходные экстракты)"] --> B
+    T[".github/skills/requirements-template/SKILL.md<br/>(шаблон и качественная планка)"] --> B
+    O["prompts/requirements_writer/output_schema.md<br/>(обязательная структура)"] --> B
+    C["prompts/requirements_writer/conflict_rules.md<br/>(правила разрешения конфликтов)"] --> B
+
+    B --> D{"Проверка по 14 пунктам<br/>S1–S14"}
+
+    D -->|0 CRITICAL<br/>≤2 MAJOR| F["VERDICT: APPROVED"]
+    D -->|≥1 CRITICAL<br/>или ≥3 MAJOR| G["VERDICT: REVISE"]
+
+    F --> H["Конец пайплайна"]
+    G --> I["feedback → requirements_writer"]
+    I --> J["_requirements.md<br/>(ревизия)"]
+    J --> B
+
+    style F fill:#90EE90
+    style G fill:#FFB6C1

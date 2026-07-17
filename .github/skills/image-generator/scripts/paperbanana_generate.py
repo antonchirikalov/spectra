@@ -84,6 +84,11 @@ async def run_pipeline(
     """
     from paperbanana import PaperBananaPipeline, GenerationInput, DiagramType
 
+    # Defensive cleanup for shell-composed commands on Windows. A leading space
+    # before a drive letter (" C:\\...") makes os.makedirs() fail after the
+    # expensive generation has completed.
+    output_path = output_path.strip().strip('"').strip("'")
+
     settings = _build_settings(iterations=max_critic_rounds, optimize=optimize, auto_refine=auto_refine)
     pipeline = PaperBananaPipeline(settings=settings)
 
@@ -97,11 +102,12 @@ async def run_pipeline(
     result = await pipeline.generate(gen_input)
 
     # Copy the final image to the requested output path
-    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-    shutil.copy2(result.image_path, output_path)
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(result.image_path, output)
 
-    logger.info("Pipeline complete: %d iteration(s), saved to %s", len(result.iterations), output_path)
-    return output_path
+    logger.info("Pipeline complete: %d iteration(s), saved to %s", len(result.iterations), output)
+    return str(output)
 
 
 # ---------------------------------------------------------------------------

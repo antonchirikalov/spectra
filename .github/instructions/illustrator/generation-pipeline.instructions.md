@@ -38,22 +38,23 @@ python3 -m venv .venv && .venv/bin/pip install "git+https://github.com/llmsresea
 ## Phase 1: Plan
 
 1. Read the target document (`DOCUMENT_PATH` — provided by the caller in the prompt). If `{BASE_FOLDER}/research/_plan/params.md` exists, read it too.
-2. **Extract all `<!-- ILLUSTRATION: type=..., section=..., description="..." -->` placeholders** left by the Writer. Each placeholder has a caption line below it: `*Рис. N. Caption*`
-3. For each placeholder, parse:
+2. Determine the project illustration folder: use `{BASE_FOLDER}/illustrations` when `BASE_FOLDER` is provided; otherwise use `{DOCUMENT_PATH.parent}/illustrations`. Create it if it does not exist. Final PNGs and `_manifest.md` MUST be saved there, next to the project document. Do not save final project illustrations under the spectra repository's `docs/illustrations` unless the target document itself lives there.
+3. **Extract all `<!-- ILLUSTRATION: type=..., section=..., description="..." -->` placeholders** left by the Writer. Each placeholder has a caption line below it: `*Рис. N. Caption*`
+4. For each placeholder, parse:
    - `type` — architecture, comparison, pipeline, infographic, conceptual
    - `section` — which document section this belongs to
    - `description` — Writer's detailed description of what to visualize (200+ chars)
-4. If no placeholders found, fall back to independent identification:
+5. If no placeholders found, fall back to independent identification:
    - Architecture/system design sections
    - Pipeline/workflow descriptions
    - Comparison sections with complex relationships
    - Abstract concepts that benefit from visual representation
-5. For each illustration, prepare:
+6. For each illustration, prepare:
    - **Description** (2-6 sentences): what to visualize, key components, relationships. Use the Writer's `description` as the primary input.
    - **Context** (200-500 words): copy the relevant section text from the draft for the Planner agent to understand the domain.
    - Do NOT micro-manage layout, colors, composition, or background — PaperBanana's Planner/Stylist/Critic agents handle all styling decisions internally.
-6. Record the plan internally before proceeding to generation.
-7. Determine illustration label: read `language` from `params.md` if available; otherwise use the language specified in the calling prompt; default is Russian ("Рис.", "Fig." for English).
+7. Record the plan internally before proceeding to generation.
+8. Determine illustration label: read `language` from `params.md` if available; otherwise use the language specified in the calling prompt; default is Russian ("Рис.", "Fig." for English).
 
 ## Phase 2: Generate
 
@@ -67,6 +68,10 @@ For each illustration, select the mode based on type:
 | **`--auto`** | When quality matters more than speed | `.venv/bin/python3 .github/skills/image-generator/scripts/paperbanana_generate.py "[description]" "path.png" --context "[section text]" --auto --max-iterations 5` |
 
 > **Pipeline takes 3–5 min per illustration (5–7 API calls).** Always use `run_in_terminal` with `timeout: 0` (no timeout limit).
+
+### Output path and Windows safety
+
+The output argument passed to `paperbanana_generate.py` MUST resolve to the project illustration folder from Phase 1 (`{BASE_FOLDER}/illustrations` or `{DOCUMENT_PATH.parent}/illustrations`). On Windows, quote the output path carefully and ensure there is no leading whitespace inside the quotes before the drive letter. If shell quoting for an absolute `C:\...` path is unreliable, use a relative path from the current working directory that still resolves to the project illustration folder, or generate into a repo-local temp path and immediately move the PNG into the project illustration folder. The final embedded document links must point to the project-folder PNGs.
 
 ### Step 2: Craft the Prompt
 
@@ -101,7 +106,7 @@ After all are generated:
    - Locate the end of the first paragraph after that heading
    - Insert both the image link AND the italic caption line
 
-2. Create `illustrations/_manifest.md` — must include **Regeneration Prompts** section (see below).
+2. Create `{project illustration folder}/_manifest.md` — must include **Regeneration Prompts** section (see below).
 3. **VERIFY:** Read `DOCUMENT_PATH` and confirm every generated PNG is referenced. If any is missing, insert it.
 
 **Output without embedded images = FAILED. Every PNG must appear as `![...]` in `DOCUMENT_PATH`.**

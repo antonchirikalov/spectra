@@ -22,5 +22,7 @@ See these instruction files for complete requirements:
 4. **Never create a wrapper script** (`generate_all.py`, `run_illustrations.sh`, etc.) — call bash directly for each illustration. Wrapper scripts are a failure mode.
 5. **gpt-image-2 and the reference dataset are automatic** — no `--model`, `--direct`, or dataset path flags needed. The script picks them up from env and `~/.cache/paperbanana/` automatically.
 6. **Embed all PNGs in the target document** (`DOCUMENT_PATH` provided in the calling prompt) with numbered captions (`![Fig. N. Caption](...)` + italic line below). Verify after generation — orphan PNGs = FAILED run.
-7. **If PaperBanana fails** — report the error to the caller. Do NOT fall back to code-generated diagrams (Mermaid, Graphviz, etc.).
-8. **Write `docs/illustrations/_manifest.md`** with regeneration prompts after all illustrations are generated.
+7. **Project-folder outputs** — save final PNGs and `_manifest.md` in the target project's illustration folder: `{BASE_FOLDER}/illustrations` when provided, otherwise `{DOCUMENT_PATH.parent}/illustrations`. Do not save final client/project illustrations under repo `docs/illustrations` unless the target document itself lives there.
+8. **Windows path safety** — the `paperbanana_generate.py` output path must resolve to that project illustration folder. Avoid leading whitespace inside quoted output-path arguments; a leading space before a drive letter causes `WinError 123` after generation. If absolute `C:\...` quoting is unreliable, use a relative path from the current working directory or generate to temp and immediately move the PNG to the project illustration folder.
+9. **If PaperBanana fails** — report the error to the caller. Do NOT fall back to code-generated diagrams (Mermaid, Graphviz, etc.).
+10. **Write `{project illustration folder}/_manifest.md`** with regeneration prompts after all illustrations are generated.

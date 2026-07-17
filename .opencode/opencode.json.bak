@@ -1,0 +1,84 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  "provider": {
+    "openai": {
+      "npm": "@ai-sdk/openai",
+      "options": { "apiKey": "{env:OPENAI_API_KEY}" },
+      "models": {
+        "gpt-4o":  { "name": "GPT-4o" },
+        "gpt-4.1": { "name": "GPT-4.1" },
+        "gpt-4.5": { "name": "GPT-5.5" }
+      }
+    },
+    "kimi": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Kimi (Moonshot)",
+      "options": {
+        "baseURL": "https://api.moonshot.ai/v1",
+        "apiKey": "{env:MOONSHOT_API_KEY}"
+      },
+      "models": {
+        "kimi-k2.6": { "name": "Kimi K2.6" },
+        "kimi-k2.7-code": { "name": "Kimi K2.7 Code" }
+      }
+    }
+  },
+
+  "mcp": {
+    "mcp-atlassian-scnsoft": {
+      "type": "local",
+      "command": ["uvx", "mcp-atlassian"],
+      "environment": {
+        "CONFLUENCE_URL": "https://confluence.scnsoft.com",
+        "CONFLUENCE_USERNAME": "achirikalov@scnsoft.com",
+        "CONFLUENCE_PERSONAL_TOKEN": "{env:CONFLUENCE_PERSONAL_TOKEN}",
+        "JIRA_URL": "https://jira.scnsoft.com/",
+        "JIRA_PERSONAL_TOKEN": "{env:JIRA_PERSONAL_TOKEN}"
+      }
+    },
+    "github": {
+      "type": "remote",
+      "url": "https://api.githubcopilot.com/mcp/"
+    },
+    "pdf-reader": {
+      "type": "local",
+      "command": ["pdf-reader-mcp"]
+    },
+    "huggingface": {
+      "type": "remote",
+      "url": "https://hf.co/mcp"
+    },
+    "tavily-remote": {
+      "type": "local",
+      "command": [
+        "C:\\Program Files\\nodejs\\npx.cmd", "-y", "mcp-remote",
+        "https://mcp.tavily.com/mcp/?tavilyApiKey={env:TAVILY_API_KEY}"
+      ]
+    },
+    "ss-gateway": {
+      "type": "local",
+      "command": [
+        "node",
+        "C:\\Users\\achirikalov\\AppData\\Roaming\\ss-ai-setup-electron\\mcp-launcher\\mcp-wrapper.js",
+        "{env:SS_GATEWAY_UUID}"
+      ]
+    },
+    "docx-mcp": {
+      "type": "local",
+      "command": ["uvx", "docx-mcp"]
+    },
+    "excel": {
+      "type": "local",
+      "command": ["excel-mcp-server"]
+    }
+  },
+
+  "permission": {
+    "bash":      "allow",
+    "read":      "allow",
+    "edit":      "allow",
+    "webfetch":  "allow",
+    "websearch": "allow"
+  }
+}
