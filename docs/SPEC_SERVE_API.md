@@ -101,6 +101,8 @@ requirements_runner.py
 
 ### 3.2. Используемые эндпоинты
 
+> **Проверено spike'ом 2026-07-17** (`scripts/spike_serve_api.py`, opencode 1.18.3): все эндпоинты ниже работают; точные шейпы — в §3.9. OpenAPI-спека сохранена в `docs/openapi/opencode-1.18.3.json`, захваченные события — в `docs/openapi/spike_events.jsonl`.
+
 | Эндпоинт | Назначение в раннере |
 |---|---|
 | `GET /global/health` | Ожидание готовности сервера при старте |
@@ -118,7 +120,53 @@ requirements_runner.py
 | `POST /instance/dispose` | Корректная остановка сервера |
 | `GET /doc` | OpenAPI-спека — источник истины по типам при реализации |
 
-Точные имена полей (`model` как `{providerID, modelID}`) и типов событий SSE берутся из OpenAPI-спеки `/doc` целевой версии opencode — генерируется типизированный клиент или фиксируется руками в `opencode_client.py`. Это сознательное решение: не хардкодить непроверенные имена полей в спеке.
+Точные имена полей и типов событий SSE проверены spike'ом — см. §3.9. Источник истины на будущее — OpenAPI-спека `/doc` целевой версии opencode.
+
+### 3.9. Проверенные шейпы API (spike 2026-07-17, opencode 1.18.3)
+
+**Health:** `GET /global/health` → `{"healthy": true, "version": "1.18.3"}`.
+
+**Агенты:** `GET /agent` → 19 агентов: все 12 агентов spectra + 7 встроенных (build, plan, general, explore, compaction, title, summary). Имя агента = имя `.md`-файла.
+
+**MCP:** `GET /mcp` → `{"<name>": {"status": "connected"|"failed", "error"?}}`. На spike: pdf-reader, tavily-remote, mcp-atlassian-scnsoft, docx-mcp, ss-gateway, huggingface — connected; github — failed (предсуществующая проблема OAuth, пайплайнам не нужен).
+
+**Создание сессии:** `POST /session` body `{"title": "..."}` → `{id, projectID, directory, path, slug, time, title, tokens, cost, version}`.
+
+**Отправка промпта (рабочий шейп):**
+```json
+POST /session/:id/message
+{
+  "agent": "source_processor",
+  "model": {"providerID": "kimi", "modelID": "kimi-k3"},
+  "parts": [{"type": "text", "text": "Read your task from: <path>"}]
+}
+```
+Маппинг `provider/model` → `{providerID, modelID}`: split по первому `/`. Ответ `200 OK`:
+```json
+{
+  "info": {"id", "sessionID", "role", "agent", "mode", "modelID", "providerID", "parentID", "path", "time", "tokens", "cost", "finish"},
+  "parts": [{"type": "step-start"}, {"type": "reasoning"}, {"type": "text", "text": "..."}, {"type": "step-finish"}]
+}
+```
+Финальный текст агента = конкатенация `parts[type=text].text`. В `info` — `tokens` и `cost` (можно писать в ledger для учёта стоимости прогона — бонус против subprocess).
+
+**SSE-стрим:** `GET /event` → строки `data: {json}`. Конверт события: `{"id": "evt_...", "type": "<type>", "properties": {...}}`; фильтр по сессии — `properties.sessionID`. Наблюденные типы (spike): `server.connected`, `server.heartbeat`, `session.created`, `session.updated`, `session.status` (`{status: {type: "busy"|"idle"}}`), `session.idle`, `session.error` (`{error: {name, data: {message}}}`), `session.diff`, `message.updated`, `message.part.updated`, `message.part.delta`, `catalog.updated`, `integration.updated`, `plugin.added`, `reference.updated`. В спеке дополнительно: `EventPermissionAsked` / `EventPermissionReplied` (+V2), семейство `SessionNext*` (ToolCalled/ToolSuccess/ToolFailed, Text*, Reasoning*, Compaction*).
+
+**Маппинг событий → `error_kind` (закрывает открытый вопрос плана):**
+
+| Событие / условие | error_kind | Действие раннера |
+|---|---|---|
+| client-side таймер истёк | `timeout` | `POST /session/:id/abort` → ждать `session.error {name: "MessageAbortedError"}` → fail шага |
+| `session.error` с `error.name` ≠ MessageAbortedError | `api` | текст из `error.data.message` → fail без regex |
+| HTTP ≠ 200 на `/message` | `process` | body ответа → fail |
+| HTTP 200, но в финальном тексте нет JSON-блока | `no_json` | как сейчас (parse_json_from_text) |
+| `session.idle` после `/message` | — | нормальное завершение шага |
+
+**Отмена:** `POST /session/:id/abort` → `200 true`; `GET /session/status` после — пусто (`{}`, нет busy-сессий); на сессию прилетает `session.error {name: "MessageAbortedError"}` — использовать как подтверждение отмены.
+
+**Async-вариант:** `POST /session/:id/prompt_async` → `204` (проверен на abort-тесте); результат дочитывается через `GET /session/:id/message` и SSE.
+
+**parentID:** `POST /session` принимает `parentID` — сессии прогона можно группировать под одной корневой («run-<run_id>») для удобной навигации в `opencode attach` и `GET /session/:id/children`. Рекомендация: использовать.
 
 ### 3.3. Тонкий клиент: новый модуль `opencode_client.py`
 

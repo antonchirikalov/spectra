@@ -128,9 +128,16 @@
 | 4 — зачистка | 0.5 дня |
 | **Итого** | **3.5–5 дней** |
 
-## 6. Открытые вопросы (закрываются на этапе 0)
+## 6. Открытые вопросы — ЗАКРЫТЫ spike'ом 2026-07-17
 
-- Точный шейп `model` в `POST /session/:id/message`.
-- Полный перечень типов SSE-событий и маппинг на `error_kind`.
-- Поведение `POST /session/:id/message` при ошибке провайдера (HTTP-код + событие?).
-- Нужен ли `parentID` для группировки сессий прогона (удобство `opencode attach`).
+Этап 0 выполнен (`scripts/spike_serve_api.py`, opencode 1.18.3). Результаты зафиксированы в `SPEC_SERVE_API.md` §3.9; спека и события — в `docs/openapi/`.
+
+- ✅ Шейп `model`: объект `{"providerID": "kimi", "modelID": "kimi-k3"}` — HTTP 200.
+- ✅ SSE: конверт `{id, type, properties}`, фильтр по `properties.sessionID`; типы событий и маппинг на `error_kind` — в спеке §3.9.
+- ✅ Ошибки: типизированный `session.error {error: {name, data: {message}}}` — regex не нужен; abort подтверждается `MessageAbortedError`.
+- ✅ parentID: поддерживается — сессии прогона группируем под корневой `run-<run_id>`.
+- ✅ Все 12 агентов spectra видны через `GET /agent`; нужные MCP — connected.
+- ✅ K3 работает через API: тестовый вызов `kimi/kimi-k3` → 200 OK.
+- ⚠️ github MCP — failed (OAuth, предсуществующее; пайплайнам не нужен).
+
+Бонус-находка: ответ `/message` содержит `info.tokens` и `info.cost` — можно писать стоимость каждого шага в `state.json` (учёт стоимости прогона, чего не было в subprocess).
