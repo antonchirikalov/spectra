@@ -56,7 +56,7 @@ cp .env.example .env
 # Run solution design with multiple models (parallel)
 .venv/bin/python3 solution_design_runner.py run \
   /path/to/requirements_YYYYMMDD_HHMMSS/_requirements.md \
-  --models kimi/kimi-k2.6 openai/gpt-4o
+  --models kimi/kimi-k3 openai/gpt-4o
 
 # Check run status
 .venv/bin/python3 requirements_runner.py status \
@@ -133,12 +133,12 @@ Edit `.env` — add keys for the providers you want to use:
 
 | Provider | Key | Models | Notes |
 |---|---|---|---|
-| Moonshot | `MOONSHOT_API_KEY` | `kimi/kimi-k2.6` | Default — best agentic benchmark |
+| Moonshot | `MOONSHOT_API_KEY` | `kimi/kimi-k3` | Default — best agentic benchmark |
 | OpenAI | `OPENAI_API_KEY` | `openai/gpt-4o`, `openai/gpt-4.1` | Good for critic agents |
 | DeepSeek | `DEEPSEEK_API_KEY` | `deepseek/deepseek-chat`, `deepseek/deepseek-reasoner` | Cheapest for high volume |
 | Qwen | `QWEN_API_KEY` | `qwen/qwen3.6-plus` | 1M context, large doc sets |
 | Anthropic | `ANTHROPIC_API_KEY` | `anthropic/claude-sonnet-4-6` | Via `claude` CLI |
-| Fireworks | `FIREWORKS_API_KEY` | `kimi/kimi-k2.6`, any open weight | US-hosted, data residency |
+| Fireworks | `FIREWORKS_API_KEY` | `kimi/kimi-k3`, any open weight | US-hosted, data residency |
 
 Also add if using integrations:
 ```
@@ -233,7 +233,7 @@ project/
     _requirements.md                      ← input (untouched)
   solution_design_20260604_160312/
     _solution_design.md                   ← final deliverable
-    _design_kimi_kimi-k2_6.md             ← Phase 1 candidate
+    _design_kimi_kimi-k3.md             ← Phase 1 candidate
     _design_openai_gpt-4o.md              ← Phase 1 candidate (if --models)
     _selection_report.md                  ← WINNING_MODEL: ...
     _verdict_round1.md                    ← critic verdict
@@ -339,16 +339,16 @@ Phase 1 (parallel) → Phase 2 → Phase 3 (loop) → Phase 4
 
 One `solution_designer` agent per model, all launched concurrently. Each produces `_design_<model_slug>.md` — a complete solution design in one committed architecture. No options menus, no effort estimates.
 
-Default: `kimi/kimi-k2.6`. Override:
+Default: `kimi/kimi-k3`. Override:
 
 ```bash
 # Two designs in parallel
 python3 solution_design_runner.py run _requirements.md \
-  --models kimi/kimi-k2.6 openai/gpt-4o
+  --models kimi/kimi-k3 openai/gpt-4o
 
 # Three designs in parallel
 python3 solution_design_runner.py run _requirements.md \
-  --models kimi/kimi-k2.6 openai/gpt-4o openai/gpt-4.1
+  --models kimi/kimi-k3 openai/gpt-4o openai/gpt-4.1
 ```
 
 If one model fails, the pipeline continues with the survivors.
@@ -377,7 +377,7 @@ Prints paths to all artifacts, winning model, final verdict, and count of `<!-- 
 |---|---|---|---|
 | `run` | `project_dir` | — | Path to folder with source documents |
 | `run` | `--mode` | `extract` | `extract` or `discovery` |
-| `run` | `--model` | `kimi/kimi-k2.6` | Override model for all agents |
+| `run` | `--model` | `kimi/kimi-k3` | Override model for all agents |
 | `run` | `--workers` | 3 | Max parallel `source_processor` agents |
 | `run` | `--interactive` | off | Pause at HITL checkpoints |
 | `run` | `--debug` | off | DEBUG-level logging to stderr |
@@ -393,7 +393,7 @@ Prints paths to all artifacts, winning model, final verdict, and count of `<!-- 
 | Subcommand | Argument | Default | Description |
 |---|---|---|---|
 | `run` | `requirements_path` | — | Path to `_requirements.md` |
-| `run` | `--models MODEL [...]` | `kimi/kimi-k2.6` | Models for parallel Phase 1 |
+| `run` | `--models MODEL [...]` | `kimi/kimi-k3` | Models for parallel Phase 1 |
 | `run` | `--verbose` / `-v` | off | DEBUG logging to stderr |
 | `status` | `output_dir` | — | Show step table |
 | `resume` | `output_dir` | — | Continue interrupted run |
@@ -408,7 +408,7 @@ Prints paths to all artifacts, winning model, final verdict, and count of `<!-- 
 | requirements | `phase2:requirements_writer` | |
 | requirements | `critic:r<n>` | `critic:r2` |
 | requirements | `revision:r<n>` | `revision:r1` |
-| solution design | `designer-<model-slug>` | `designer-kimi_kimi-k2_6` |
+| solution design | `designer-<model-slug>` | `designer-kimi_kimi-k3` |
 | solution design | `selector` | |
 | solution design | `critic:r<n>` | `critic:r1` |
 | solution design | `revision:r<n>` | `revision:r2` |
@@ -450,10 +450,10 @@ models: {}
 # Cost-optimised: DeepSeek for volume, Kimi for quality
 models:
   source_processor:         deepseek/deepseek-chat   # cheapest, high volume
-  arch_probe:               kimi/kimi-k2.6
-  requirements_writer:      kimi/kimi-k2.6
+  arch_probe:               kimi/kimi-k3
+  requirements_writer:      kimi/kimi-k3
   requirements_critic:      deepseek/deepseek-chat
-  solution_designer:        kimi/kimi-k2.6
+  solution_designer:        kimi/kimi-k3
   solution_design_critic:   openai/gpt-4o            # strong critic
 
 # Mixed: Kimi + Claude on quality-critical agents
@@ -461,11 +461,11 @@ models:
   source_processor:         deepseek/deepseek-chat
   requirements_writer:      anthropic/claude-sonnet-4-6
   requirements_critic:      anthropic/claude-sonnet-4-6
-  solution_designer:        kimi/kimi-k2.6
+  solution_designer:        kimi/kimi-k3
   solution_design_critic:   anthropic/claude-sonnet-4-6
 ```
 
-Empty `models: {}` → all agents use `DEFAULT_MODEL = kimi/kimi-k2.6`.
+Empty `models: {}` → all agents use `DEFAULT_MODEL = kimi/kimi-k3`.
 
 ### Adding a provider
 

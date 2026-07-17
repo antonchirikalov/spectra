@@ -10,7 +10,7 @@
         "apiKey": "{env:MOONSHOT_API_KEY}"
       },
       "models": {
-        "kimi-k2.6": { "name": "Kimi K2.6" }
+        "kimi-k3": { "name": "Kimi K3" }
       }
     },
     "openai": {

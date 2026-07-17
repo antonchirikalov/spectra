@@ -35,12 +35,41 @@ from pathlib import Path
 
 from loguru import logger
 
+
+def _load_dotenv(env_path: Path) -> None:
+    """Load .env into os.environ so subprocesses (opencode) inherit the vars."""
+    if not env_path.exists():
+        return
+    with env_path.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = val
+
+
+_load_dotenv(Path(__file__).resolve().parent / ".env")
+
 # ── Constants ──────────────────────────────────────────────────────────────────
 REPO_ROOT = Path(__file__).resolve().parent
 AGENT_TIMEOUT_S = 3600
 MAX_CRITIC_ROUNDS = 3
 MIN_OUTPUT_BYTES = 200
-DEFAULT_MODEL = "kimi/kimi-k2.6"
+DEFAULT_MODEL = "kimi/kimi-k3"
+
+
+def _find_opencode() -> str:
+    import shutil
+    if sys.platform == "win32":
+        return shutil.which("opencode.cmd") or shutil.which("opencode") or "opencode.cmd"
+    return shutil.which("opencode") or "opencode"
+
+
+OPENCODE_EXE = _find_opencode()
 
 DESIGNER_MODELS = [DEFAULT_MODEL]
 
@@ -60,7 +89,7 @@ def gate_design_file(path: Path) -> tuple[bool, str]:
 def gate_verdict_file(path: Path) -> tuple[bool, str]:
     if not path.exists():
         return False, "file not found"
-    text = path.read_text().strip()
+    text = path.read_text(encoding="utf-8").strip()
     if not text:
         return False, "empty file"
     first_line = text.splitlines()[0]
@@ -86,7 +115,7 @@ class Ledger:
     def _save(self) -> None:
         self._state["updated_at"] = self._now()
         tmp = self._path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(self._state, indent=2, ensure_ascii=False))
+        tmp.write_text(json.dumps(self._state, indent=2, ensure_ascii=False), encoding="utf-8")
         os.replace(tmp, self._path)
 
     @classmethod
@@ -117,7 +146,7 @@ class Ledger:
     @classmethod
     def load(cls, path: Path) -> "Ledger":
         l = cls(path)
-        l._state = json.loads(path.read_text())
+        l._state = json.loads(path.read_text(encoding="utf-8"))
         for sid, step in l._state.get("steps", {}).items():
             if step.get("status") == "running":
                 logger.warning(f"[ledger] '{sid}' was running at crash → reset to pending")
@@ -255,7 +284,8 @@ def _run_with_heartbeat(cmd: list, slug: str, timeout: int) -> subprocess.Comple
     threading.Thread(target=_beat, daemon=True).start()
     try:
         return subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, cwd=str(REPO_ROOT)
+            cmd, capture_output=True, text=True, timeout=timeout, cwd=str(REPO_ROOT),
+            encoding="utf-8", errors="replace"
         )
     finally:
         stop.set()
@@ -281,7 +311,7 @@ def run_agent_write(
     """Run agent; agent writes output to output_path via write tool."""
     m = model or DEFAULT_MODEL
     cmd = [
-        "opencode", "run",
+        OPENCODE_EXE, "run",
         "--agent", agent_name,
         "--model", m,
         "--format", "json",
@@ -301,9 +331,9 @@ def run_agent_write(
     if logs_dir:
         logs_dir.mkdir(parents=True, exist_ok=True)
         if proc.stdout:
-            (logs_dir / f"{slug}.events.jsonl").write_text(proc.stdout)
+            (logs_dir / f"{slug}.events.jsonl").write_text(proc.stdout, encoding="utf-8")
         if proc.stderr:
-            (logs_dir / f"{slug}.stderr.txt").write_text(proc.stderr)
+            (logs_dir / f"{slug}.stderr.txt").write_text(proc.stderr, encoding="utf-8")
 
     logger.debug(f"[{slug}] exit {proc.returncode}, stdout {len(proc.stdout)} chars")
     if proc.returncode != 0:
@@ -353,7 +383,7 @@ def write_designer_prompt(prompt_file: Path, requirements_path: Path,
     ]
     if revision_instructions:
         lines.append(f"Revision instructions: {revision_instructions}")
-    prompt_file.write_text("\n".join(lines))
+    prompt_file.write_text("\n".join(lines), encoding="utf-8")
 
 
 def write_selector_prompt(prompt_file: Path,
@@ -361,26 +391,28 @@ def write_selector_prompt(prompt_file: Path,
                            output_path: Path, report_path: Path) -> None:
     lines = [f"Candidate {label} ({model}): {path}" for label, model, path in candidates]
     lines += [f"Output file: {output_path}", f"Selection report: {report_path}"]
-    prompt_file.write_text("\n".join(lines) + "\n")
+    prompt_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def write_critic_prompt(prompt_file: Path, design_path: Path, verdict_path: Path) -> None:
     prompt_file.write_text(
         f"Solution design document: {design_path}\n"
-        f"Verdict output: {verdict_path}\n"
+        f"Verdict output: {verdict_path}\n",
+        encoding="utf-8",
     )
 
 
 def write_revision_prompt(prompt_file: Path, requirements_path: Path,
                            output_file: Path, verdict_path: Path) -> None:
-    verdict_text = verdict_path.read_text() if verdict_path.exists() else ""
+    verdict_text = verdict_path.read_text(encoding="utf-8") if verdict_path.exists() else ""
     issues_match = re.search(r"## Issues\n(.+?)(?=\n## |\Z)", verdict_text, re.DOTALL)
     issues_text = issues_match.group(1).strip() if issues_match else verdict_text.strip()
     prompt_file.write_text(
         f"Requirements document: {requirements_path}\n"
         f"Output file: {output_file}\n"
         f"Revision instructions: Address the following issues from the critic review:\n"
-        f"{issues_text}\n"
+        f"{issues_text}\n",
+        encoding="utf-8",
     )
 
 
@@ -388,14 +420,14 @@ def write_revision_prompt(prompt_file: Path, requirements_path: Path,
 def parse_verdict(verdict_path: Path) -> str:
     if not verdict_path.exists():
         return "REVISE"
-    return "APPROVED" if "VERDICT: APPROVED" in verdict_path.read_text() else "REVISE"
+    return "APPROVED" if "VERDICT: APPROVED" in verdict_path.read_text(encoding="utf-8") else "REVISE"
 
 
 def parse_winning_model(report_path: Path, designer_models: list[str]) -> str:
     fallback = designer_models[0]
     if not report_path.exists():
         return fallback
-    m = re.search(r"WINNING_MODEL:\s*(.+)", report_path.read_text())
+    m = re.search(r"WINNING_MODEL:\s*(.+)", report_path.read_text(encoding="utf-8"))
     return m.group(1).strip() if m else fallback
 
 
@@ -526,7 +558,7 @@ def _execute_pipeline(out_dir: Path, requirements_path: Path,
             if not ok:
                 print("[WARNING] Selector failed; falling back to first candidate.", flush=True)
                 shutil.copy2(design_paths[successful_models[0]], final_design_path)
-                selection_report_path.write_text(f"WINNING_MODEL: {successful_models[0]}\n")
+                selection_report_path.write_text(f"WINNING_MODEL: {successful_models[0]}\n", encoding="utf-8")
                 ledger.mark_done("selector", final_design_path, 0.0)
     else:
         print("[SKIP] selector (already done)", flush=True)
@@ -607,7 +639,7 @@ def _execute_pipeline(out_dir: Path, requirements_path: Path,
     print(f"[DONE] Winning model:    {winning_model}", flush=True)
     print(f"[DONE] Critic verdict:   {final_verdict} (after {final_round} round(s))", flush=True)
     if final_design_path.exists():
-        n = final_design_path.read_text().count("<!-- ILLUSTRATION:")
+        n = final_design_path.read_text(encoding="utf-8").count("<!-- ILLUSTRATION:")
         print(f"[DONE] Illustration placeholders: {n}", flush=True)
 
     return 0 if final_verdict == "APPROVED" else 1
@@ -670,6 +702,11 @@ def cmd_resume(output_dir: Path, retry_failed: bool = False,
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 def main() -> None:
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
     parser = argparse.ArgumentParser(
         prog="solution_design_runner",
         description="spectra solution design pipeline",

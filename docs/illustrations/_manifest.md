@@ -27,7 +27,7 @@ Phase 2 requirements_writer → Phase 3 critic loop (requirements_critic ↔ req
 → output _requirements.md. CENTER pipeline labeled 'Discovery' in blue: Phase 0 Scan → Phase 1 parallel
 source_processor boxes → Phase D1 arch_probe (20-30 questions) → Phase D2 arch_critic (8-15 questions) →
 output discovery_report.md. RIGHT pipeline labeled 'Solution Design' in purple: input _requirements.md →
-Phase 1 parallel solution_designer boxes (one per model: kimi-k2.6, gpt-4o) → Phase 2 solution_design_selector
+Phase 1 parallel solution_designer boxes (one per model: kimi-k3, gpt-4o) → Phase 2 solution_design_selector
 → Phase 3 critic loop (solution_design_critic ↔ solution_designer, up to 3 rounds) → output _solution_design.md.
 Each pipeline is a top-to-bottom flow with labeled boxes and arrows. Fill the entire canvas. No empty margins.
 ```
@@ -73,7 +73,7 @@ cd /Users/anton/Documents/spectra
 **Description:**
 ```
 Pure white background (#FFFFFF). Solution Design pipeline flow. INPUT _requirements.md on left.
-Phase 1 'Parallel generation': N solution_designer boxes side by side (kimi/kimi-k2.6, openai/gpt-4o),
+Phase 1 'Parallel generation': N solution_designer boxes side by side (kimi/kimi-k3, openai/gpt-4o),
 each producing _design_model.md, labeled 'ThreadPoolExecutor'. Arrows converge to Phase 2
 'solution_design_selector' producing _solution_design.md and _selection_report.md 'WINNING_MODEL'.
 Arrow to Phase 3 'Critic loop' solution_design_critic ↔ solution_designer, REVISE up to 3 rounds,

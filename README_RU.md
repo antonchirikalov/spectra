@@ -56,7 +56,7 @@ cp .env.example .env
 # Запустить Solution Design с несколькими моделями (параллельно)
 .venv/bin/python3 solution_design_runner.py run \
   /путь/до/requirements_YYYYMMDD_HHMMSS/_requirements.md \
-  --models kimi/kimi-k2.6 openai/gpt-4o
+  --models kimi/kimi-k3 openai/gpt-4o
 
 # Проверить статус запуска
 .venv/bin/python3 requirements_runner.py status \
@@ -133,12 +133,12 @@ cp .env.example .env
 
 | Провайдер | Переменная | Модели | Примечание |
 |---|---|---|---|
-| Moonshot | `MOONSHOT_API_KEY` | `kimi/kimi-k2.6` | По умолчанию — лучший agentic-бенчмарк |
+| Moonshot | `MOONSHOT_API_KEY` | `kimi/kimi-k3` | По умолчанию — лучший agentic-бенчмарк |
 | OpenAI | `OPENAI_API_KEY` | `openai/gpt-4o`, `openai/gpt-4.1` | Хорошо для агентов-критиков |
 | DeepSeek | `DEEPSEEK_API_KEY` | `deepseek/deepseek-chat`, `deepseek/deepseek-reasoner` | Дешевле всего для больших объёмов |
 | Qwen | `QWEN_API_KEY` | `qwen/qwen3.6-plus` | Контекст 1M, большие наборы документов |
 | Anthropic | `ANTHROPIC_API_KEY` | `anthropic/claude-sonnet-4-6` | Через CLI `claude` |
-| Fireworks | `FIREWORKS_API_KEY` | `kimi/kimi-k2.6`, любые open-weight | US-хостинг, соответствие data residency |
+| Fireworks | `FIREWORKS_API_KEY` | `kimi/kimi-k3`, любые open-weight | US-хостинг, соответствие data residency |
 
 Для интеграций добавьте:
 ```
@@ -233,7 +233,7 @@ project/
     _requirements.md                      ← вход (не изменяется)
   solution_design_20260604_160312/
     _solution_design.md                   ← финальный документ
-    _design_kimi_kimi-k2_6.md             ← кандидат Фазы 1
+    _design_kimi_kimi-k3.md             ← кандидат Фазы 1
     _design_openai_gpt-4o.md              ← кандидат Фазы 1 (при --models)
     _selection_report.md                  ← WINNING_MODEL: ...
     _verdict_round1.md                    ← вердикт критика
@@ -339,16 +339,16 @@ VERDICT: REVISE
 
 По одному агенту `solution_designer` на каждую модель, все запускаются одновременно. Каждый производит `_design_<model_slug>.md` — полный дизайн решения в одной зафиксированной архитектуре. Никаких меню выбора, никаких оценок трудоёмкости.
 
-По умолчанию: `kimi/kimi-k2.6`. Переопределение:
+По умолчанию: `kimi/kimi-k3`. Переопределение:
 
 ```bash
 # Два дизайна параллельно
 python3 solution_design_runner.py run _requirements.md \
-  --models kimi/kimi-k2.6 openai/gpt-4o
+  --models kimi/kimi-k3 openai/gpt-4o
 
 # Три дизайна параллельно
 python3 solution_design_runner.py run _requirements.md \
-  --models kimi/kimi-k2.6 openai/gpt-4o openai/gpt-4.1
+  --models kimi/kimi-k3 openai/gpt-4o openai/gpt-4.1
 ```
 
 Если одна из моделей упала, пайплайн продолжает работу с остальными.
@@ -377,7 +377,7 @@ python3 solution_design_runner.py run _requirements.md \
 |---|---|---|---|
 | `run` | `project_dir` | — | Путь к папке с исходными документами |
 | `run` | `--mode` | `extract` | `extract` или `discovery` |
-| `run` | `--model` | `kimi/kimi-k2.6` | Переопределить модель для всех агентов |
+| `run` | `--model` | `kimi/kimi-k3` | Переопределить модель для всех агентов |
 | `run` | `--workers` | 3 | Максимальное число параллельных `source_processor` |
 | `run` | `--interactive` | выкл | Остановка на HITL-контрольных точках |
 | `run` | `--debug` | выкл | Логирование уровня DEBUG в stderr |
@@ -393,7 +393,7 @@ python3 solution_design_runner.py run _requirements.md \
 | Подкоманда | Аргумент | По умолчанию | Описание |
 |---|---|---|---|
 | `run` | `requirements_path` | — | Путь до `_requirements.md` |
-| `run` | `--models MODEL [...]` | `kimi/kimi-k2.6` | Модели для параллельной Фазы 1 |
+| `run` | `--models MODEL [...]` | `kimi/kimi-k3` | Модели для параллельной Фазы 1 |
 | `run` | `--verbose` / `-v` | выкл | Логирование DEBUG в stderr |
 | `status` | `output_dir` | — | Показать таблицу шагов |
 | `resume` | `output_dir` | — | Продолжить прерванный запуск |
@@ -408,7 +408,7 @@ python3 solution_design_runner.py run _requirements.md \
 | requirements | `phase2:requirements_writer` | |
 | requirements | `critic:r<n>` | `critic:r2` |
 | requirements | `revision:r<n>` | `revision:r1` |
-| solution design | `designer-<model-slug>` | `designer-kimi_kimi-k2_6` |
+| solution design | `designer-<model-slug>` | `designer-kimi_kimi-k3` |
 | solution design | `selector` | |
 | solution design | `critic:r<n>` | `critic:r1` |
 | solution design | `revision:r<n>` | `revision:r2` |
@@ -450,10 +450,10 @@ models: {}
 # Оптимизация стоимости: DeepSeek для объёма, Kimi для качества
 models:
   source_processor:         deepseek/deepseek-chat   # дёшево, большой объём
-  arch_probe:               kimi/kimi-k2.6
-  requirements_writer:      kimi/kimi-k2.6
+  arch_probe:               kimi/kimi-k3
+  requirements_writer:      kimi/kimi-k3
   requirements_critic:      deepseek/deepseek-chat
-  solution_designer:        kimi/kimi-k2.6
+  solution_designer:        kimi/kimi-k3
   solution_design_critic:   openai/gpt-4o            # сильный критик
 
 # Смешанный: Kimi + Claude на критически важных агентах
@@ -461,11 +461,11 @@ models:
   source_processor:         deepseek/deepseek-chat
   requirements_writer:      anthropic/claude-sonnet-4-6
   requirements_critic:      anthropic/claude-sonnet-4-6
-  solution_designer:        kimi/kimi-k2.6
+  solution_designer:        kimi/kimi-k3
   solution_design_critic:   anthropic/claude-sonnet-4-6
 ```
 
-Пустой `models: {}` → все агенты используют `DEFAULT_MODEL = kimi/kimi-k2.6`.
+Пустой `models: {}` → все агенты используют `DEFAULT_MODEL = kimi/kimi-k3`.
 
 ### Добавление провайдера
 

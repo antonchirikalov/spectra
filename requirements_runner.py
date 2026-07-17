@@ -60,7 +60,7 @@ REPO_ROOT = Path(__file__).resolve().parent
 AGENT_TIMEOUT_S = 3600          # 60 min per agent — large PDFs can take 8-10 min
 MAX_CRITIC_ROUNDS = 5
 MIN_OUTPUT_BYTES = 200
-DEFAULT_MODEL = "kimi/kimi-k2.6"
+DEFAULT_MODEL = "kimi/kimi-k3"
 
 # On Windows, subprocess can't find .cmd wrappers without shell=True — resolve once.
 def _find_opencode() -> str:
@@ -523,7 +523,7 @@ project_type: software
 domain_tags: []
 
 # Per-agent model overrides — format: provider/model-id
-# Leave empty to use DEFAULT_MODEL (kimi/kimi-k2.6) for all agents
+# Leave empty to use DEFAULT_MODEL (kimi/kimi-k3) for all agents
 models: {}
 
 trust_policy:
