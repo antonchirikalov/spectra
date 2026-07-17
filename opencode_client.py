@@ -172,7 +172,13 @@ class OpencodeServer:
             self._client.close()
             self._client = None
         if self._proc:
-            self._proc.terminate()
+            if os.name == "nt":
+                # The .cmd wrapper respawns the real binary as a grandchild;
+                # terminate() alone leaks it — kill the whole tree.
+                subprocess.run(["taskkill", "/PID", str(self._proc.pid), "/T", "/F"],
+                               capture_output=True)
+            else:
+                self._proc.terminate()
             try:
                 self._proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
@@ -180,7 +186,7 @@ class OpencodeServer:
 
     # ── SSE ──────────────────────────────────────────────────────────────────
     def _sse_listen(self, capture: _SessionEvents, stop: threading.Event,
-                    auto_approve: bool) -> None:
+                    auto_approve: bool, on_event=None) -> None:
         try:
             with httpx.Client(base_url=self.base_url, timeout=None) as c:
                 with c.stream("GET", "/event") as r:
@@ -194,6 +200,11 @@ class OpencodeServer:
                         except json.JSONDecodeError:
                             continue
                         capture.feed(event)
+                        if on_event is not None:
+                            try:
+                                on_event(event)
+                            except Exception:  # noqa: BLE001 — callback must not kill SSE
+                                pass
                         if auto_approve and capture.permission_requests:
                             self._approve_pending(capture)
         except Exception as exc:  # noqa: BLE001 — SSE is best-effort
@@ -213,7 +224,8 @@ class OpencodeServer:
     # ── main entry ───────────────────────────────────────────────────────────
     def run_step(self, *, agent: str, model: str, prompt: str, slug: str,
                  timeout_s: int, parent_id: str | None = None,
-                 auto_approve: bool = True, use_sse: bool = True) -> StepResult:
+                 auto_approve: bool = True, use_sse: bool = True,
+                 on_event=None) -> StepResult:
         body_session = {"title": slug}
         if parent_id:
             body_session["parentID"] = parent_id
@@ -228,7 +240,8 @@ class OpencodeServer:
         sse_thread = None
         if use_sse:
             sse_thread = threading.Thread(target=self._sse_listen,
-                                          args=(capture, stop, auto_approve), daemon=True)
+                                          args=(capture, stop, auto_approve, on_event),
+                                          daemon=True)
             sse_thread.start()
 
         try:

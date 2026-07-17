@@ -151,5 +151,52 @@ class TestRunStep(unittest.TestCase):
         self.assertEqual(seen.get("parentID"), "ses_root")
 
 
+class TestLazyServerRace(unittest.TestCase):
+    """_serve_server() must start exactly one server under concurrent access."""
+
+    def test_single_server_under_threads(self):
+        import threading
+        from unittest.mock import patch
+
+        import requirements_runner as rr
+
+        started = []
+
+        class FakeSessionResp:
+            def json(self):
+                return {"id": "ses_root"}
+
+        class FakeClient:
+            def post(self, *a, **kw):
+                return FakeSessionResp()
+
+        class FakeServer:
+            def __init__(self, *a, **kw):
+                started.append(True)
+                self.client = FakeClient()
+
+            def start(self):
+                import time
+                time.sleep(0.05)  # widen the race window
+
+            def stop(self):
+                pass
+
+        old_server, old_root = rr._SERVER, rr._ROOT_SESSION
+        rr._SERVER, rr._ROOT_SESSION = None, None
+        try:
+            with patch("opencode_client.OpencodeServer", FakeServer):
+                threads = [threading.Thread(target=rr._serve_server) for _ in range(8)]
+                for t in threads:
+                    t.start()
+                for t in threads:
+                    t.join()
+            self.assertEqual(len(started), 1,
+                             f"expected 1 server, started {len(started)}")
+        finally:
+            rr._shutdown_serve()
+            rr._SERVER, rr._ROOT_SESSION = old_server, old_root
+
+
 if __name__ == "__main__":
     unittest.main()

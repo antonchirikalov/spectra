@@ -1,0 +1,11 @@
+industry: unknown
+project_type: software
+domain_tags: []
+
+# Per-agent model overrides — format: provider/model-id
+# Leave empty to use DEFAULT_MODEL (kimi/kimi-k3) for all agents
+models: {}
+
+trust_policy:
+  auto_resolve: true
+  escalate_on: [scope, budget, architecture, security]

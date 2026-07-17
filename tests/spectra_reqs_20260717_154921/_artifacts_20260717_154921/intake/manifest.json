@@ -1,0 +1,18 @@
+{
+  "runner_version": "1.0.0",
+  "project_dir": "C:\\Users\\achirikalov\\Documents\\agents\\spectra\\tests\\golden_input",
+  "entries": [
+    {
+      "kind": "file",
+      "slug": "brief",
+      "path": "C:\\Users\\achirikalov\\Documents\\agents\\spectra\\tests\\golden_input\\brief.md",
+      "read_tool": "read"
+    },
+    {
+      "kind": "file",
+      "slug": "notes",
+      "path": "C:\\Users\\achirikalov\\Documents\\agents\\spectra\\tests\\golden_input\\notes.txt",
+      "read_tool": "read"
+    }
+  ]
+}

@@ -168,9 +168,12 @@ POST /session/:id/message
 
 **parentID:** `POST /session` принимает `parentID` — сессии прогона можно группировать под одной корневой («run-<run_id>») для удобной навигации в `opencode attach` и `GET /session/:id/children`. Рекомендация: использовать.
 
-### 3.3. Тонкий клиент: новый модуль `opencode_client.py`
+### 3.3. Тонкий клиент: новый модуль `opencode_client.py` — РЕАЛИЗОВАНО (этап 1, 2026-07-17)
 
-Один файл, ~200–300 строк, зависимости: `httpx` (уже есть в `.venv` для confluence-publisher). Официальный SDK существует только для TypeScript (`@opencode-ai/sdk`), поэтому Python работает напрямую по HTTP.
+Модуль `opencode_client.py` в корне репо (~250 строк, `httpx`). Тесты: `tests/test_opencode_client.py` (11 шт., MockTransport, без живого сервера). Два урока из реализации:
+
+1. **Windows tree-kill.** `proc.terminate()` убивает только `.cmd`-обёртку — реальный бинарник сервера (внук) остаётся жить. `stop()` делает `POST /instance/dispose`, затем `taskkill /PID <pid> /T /F` на Windows.
+2. **Гонка ленивой инициализации.** Потоки Phase 1 одновременно вызывают старт сервера — нужен double-checked locking (`_SERVER_LOCK`), иначе стартуют два сервера (поймано на golden-run).
 
 Публичный интерфейс (скетч):
 

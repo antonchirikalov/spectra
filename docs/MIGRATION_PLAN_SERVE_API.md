@@ -57,7 +57,7 @@
 
 **Выход:** обновлённая спека, список событий для детекции, подтверждённый end-to-end вызов одного агента.
 
-### Этап 1 — Модуль `opencode_client.py` (1 день)
+### Этап 1 — Модуль `opencode_client.py` (1 день) — ✅ ВЫПОЛНЕН 2026-07-17
 
 - 1.1. `OpencodeServer.start(port=0)`: `subprocess.Popen(["opencode", "serve", ...], cwd=REPO_ROOT)` → опрос `GET /global/health` до ready (≤ 30 с) → сверка `version` с поддерживаемой (warn при расхождении).
 - 1.2. Sanity-check при старте: `GET /agent` ⊇ нужные агенты; `GET /mcp` — все `connected`; иначе — понятная ошибка до начала фаз.
@@ -71,7 +71,12 @@
 
 **Выход:** модуль + тесты; `requirements.txt` +`httpx` (проверить наличие).
 
-### Этап 2 — `requirements_runner.py` (1–2 дня)
+### Этап 2 — `requirements_runner.py` (1–2 дня) — ✅ ВЫПОЛНЕН 2026-07-17
+
+Реализовано: флаг `--transport subprocess|serve` (run + resume), фасад `_run_agent_via_serve` / serve-ветка `run_agent_write`, ленивый старт сервера с блокировкой (гонка поймана и исправлена), корневая сессия `run-<id>` для группировки, watch-поток с последним SSE-событием вместо слепого heartbeat.
+Golden-run (tests/golden_input, 2 источника, K3): полный Extract — 2 extract.json → `_requirements.md` (20 FR / 4 NFR / 5 BR) → critic r1 REVISE → ревизия → r2 APPROVED. Resume на serve: все шаги skipped, сервер не стартует без нужды. Crash-resume тест и Discovery-прогон — на этапе 3 вместе с SD (единый прогон).
+
+**Критерий выхода:** 1 зелёный Extract с ревизией критика ✅ + resume ✅ (Discovery и crash-resume перенесены в этап 3).
 
 - 2.1. CLI: `--transport subprocess|serve` (default `subprocess`); проброс в оба режима `run`/`resume`.
 - 2.2. Фасад: `run_agent()`/`run_agent_write()` диспетчерят по транспорту; serve-ветка — адаптер к `OpencodeServer.run_step()`, сохраняющий `AgentResult` и `(bool, event_log)`.

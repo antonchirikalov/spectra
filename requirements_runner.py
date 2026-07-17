@@ -21,6 +21,7 @@ Step IDs (for --force-step):
 """
 
 import argparse
+import atexit
 import json
 import os
 import re
@@ -70,6 +71,80 @@ def _find_opencode() -> str:
     return shutil.which("opencode") or "opencode"
 
 OPENCODE_EXE = _find_opencode()
+
+# ── Serve transport (opencode serve + HTTP API; see docs/SPEC_SERVE_API.md) ────
+_TRANSPORT = "subprocess"          # "subprocess" | "serve" (CLI --transport)
+_SERVER = None                     # OpencodeServer, lazily started
+_SERVER_LOCK = threading.Lock()    # guards lazy init (Phase 1 threads race here)
+_ROOT_SESSION = None               # parent session grouping all run steps
+
+
+def _serve_server():
+    """Lazily start the shared opencode server and root session for this run."""
+    global _SERVER, _ROOT_SESSION
+    if _SERVER is not None:
+        return _SERVER
+    with _SERVER_LOCK:
+        if _SERVER is not None:
+            return _SERVER
+        from opencode_client import OpencodeServer
+        _SERVER = OpencodeServer(REPO_ROOT, required_agents=tuple(AGENT_NAMES),
+                                 required_mcp=("pdf-reader", "tavily-remote"))
+        _SERVER.start()
+        root = _SERVER.client.post(
+            "/session", json={"title": f"run-{datetime.now():%Y%m%d-%H%M%S}"},
+            timeout=15).json()
+        _ROOT_SESSION = root.get("id")
+        atexit.register(_shutdown_serve)
+        logger.info(f"serve transport ready (root session {_ROOT_SESSION})")
+    return _SERVER
+
+
+def _shutdown_serve():
+    global _SERVER, _ROOT_SESSION
+    if _SERVER is not None:
+        _SERVER.stop()
+        _SERVER = None
+        _ROOT_SESSION = None
+
+
+def _run_step_serve(agent_name: str, prompt_file: Path, slug: str, model: str,
+                    label: str = None):
+    """One agent step via serve transport. Returns StepResult."""
+    import time as _time
+    from datetime import datetime as _dt
+
+    server = _serve_server()
+    display = f"{slug} — {label}" if label else slug
+    last_event = {"type": None}
+    t0 = _time.time()
+
+    def _on_event(ev):
+        props = ev.get("properties") or {}
+        if props.get("sessionID"):
+            last_event["type"] = ev.get("type")
+
+    def _watch():
+        while not done.is_set():
+            if done.wait(30):
+                return
+            el = int(_time.time() - t0)
+            print(f"[{_dt.now():%H:%M:%S}] [{display}] running... {el}s elapsed"
+                  f" (last event: {last_event['type']})", flush=True)
+
+    done = threading.Event()
+    watcher = threading.Thread(target=_watch, daemon=True)
+    print(f"[{_dt.now():%H:%M:%S}] [{display}] start", flush=True)
+    watcher.start()
+    try:
+        return server.run_step(
+            agent=agent_name, model=model,
+            prompt=f"Read your task from: {prompt_file}",
+            slug=slug, timeout_s=AGENT_TIMEOUT_S, parent_id=_ROOT_SESSION,
+            on_event=_on_event)
+    finally:
+        done.set()
+        watcher.join(timeout=2)
 
 SUPPORTED_EXT = {".md", ".txt", ".docx", ".xlsx", ".pptx",
                  ".pdf", ".png", ".jpg", ".jpeg", ".webp"}
@@ -605,11 +680,47 @@ def _run_with_heartbeat(cmd: list, slug: str, cwd: str, timeout: int,
 
 
 # ── Agent runners ──────────────────────────────────────────────────────────────
+def _run_agent_via_serve(agent_name: str, prompt_file: Path, slug: str,
+                         model: str = None, label: str = None,
+                         max_retries: int = 1) -> AgentResult:
+    """run_agent over serve transport: new session per attempt, JSON from final text."""
+    import time as _time
+
+    m = model or DEFAULT_MODEL
+    for attempt in range(max_retries + 1):
+        logger.info(f"[{slug}] Starting agent via serve ({m}) attempt {attempt + 1}/{max_retries + 1}")
+        res = _run_step_serve(agent_name, prompt_file, slug, m, label=label)
+        if not res.success:
+            logger.error(f"[{slug}] serve step failed ({res.error_kind}): {res.error}")
+            if attempt == max_retries:
+                return AgentResult(slug=slug, success=False, raw_text="",
+                                   parsed_json={}, error=res.error or res.error_kind,
+                                   event_log=res.event_log)
+            _time.sleep(2)
+            continue
+        parsed = parse_json_from_text(res.final_text)
+        if parsed:
+            logger.info(f"[{slug}] Done via serve; JSON found: True")
+            return AgentResult(slug=slug, success=True, raw_text=res.final_text,
+                               parsed_json=parsed, error="", event_log=res.event_log)
+        logger.warning(f"[{slug}] No JSON in response (attempt {attempt + 1})")
+        if attempt == max_retries:
+            return AgentResult(slug=slug, success=False, raw_text=res.final_text,
+                               parsed_json={}, error="no valid JSON in response",
+                               event_log=res.event_log)
+        _time.sleep(2)
+    return AgentResult(slug=slug, success=False, raw_text="",
+                       parsed_json={}, error="exhausted retries")
+
+
 def run_agent(agent_name: str, prompt_file: Path, slug: str,
               model: str = None, project_dir: Path = None,
               max_retries: int = 1, label: str = None) -> AgentResult:
     """Run agent and parse JSON from its stdout (used for source_processor).
     Retries on empty output or transient process errors."""
+    if _TRANSPORT == "serve":
+        return _run_agent_via_serve(agent_name, prompt_file, slug,
+                                    model=model, label=label, max_retries=max_retries)
     m = model or DEFAULT_MODEL
     cmd = [
         OPENCODE_EXE, "run",
@@ -691,6 +802,15 @@ def run_agent_write(agent_name: str, prompt_file: Path, slug: str,
                     project_dir: Path = None) -> tuple[bool, str]:
     """Run agent; agent writes output to output_path via write tool.
     Returns (success, event_log)."""
+    if _TRANSPORT == "serve":
+        m = model or DEFAULT_MODEL
+        logger.info(f"[{slug}] Starting agent write-mode via serve ({m}) → {output_path.name}")
+        res = _run_step_serve(agent_name, prompt_file, slug, m)
+        if not res.success:
+            logger.error(f"[{slug}] serve write step failed ({res.error_kind}): {res.error}")
+            return False, res.event_log
+        logger.info(f"[{slug}] Agent step finished (serve)")
+        return True, res.event_log
     m = model or DEFAULT_MODEL
     cmd = [
         OPENCODE_EXE, "run",
@@ -1525,6 +1645,12 @@ def main():
         help=f"Model for all agents (default: {DEFAULT_MODEL}). "
              "Per-agent overrides in params.yaml take precedence.",
     )
+    run_p.add_argument(
+        "--transport", choices=["subprocess", "serve"], default="subprocess",
+        help="Agent call transport: one 'opencode run' process per step "
+             "(subprocess, current default) or one shared 'opencode serve' "
+             "server + HTTP API (serve, new).",
+    )
 
     res_p = sub.add_parser("resume", help="Resume an interrupted run")
     res_p.add_argument("output_dir", type=Path)
@@ -1539,11 +1665,20 @@ def main():
         "--model", metavar="MODEL", default=None,
         help="Override model for all agents on resume.",
     )
+    res_p.add_argument(
+        "--transport", choices=["subprocess", "serve"], default="subprocess",
+        help="Agent call transport on resume (see 'run --transport').",
+    )
 
     sta_p = sub.add_parser("status", help="Show run state")
     sta_p.add_argument("output_dir", type=Path)
 
     args = parser.parse_args()
+
+    global _TRANSPORT
+    _TRANSPORT = getattr(args, "transport", "subprocess")
+    if _TRANSPORT == "serve":
+        print(f"[INFO] Using serve transport (opencode serve + HTTP API)")
 
     debug = getattr(args, "debug", False)
     logger.add(sys.stderr, level="DEBUG" if debug else "INFO", colorize=True,
