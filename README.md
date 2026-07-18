@@ -16,6 +16,8 @@ Three pipelines, same input folder:
 
 ## Pipelines
 
+![Fig. 1. Three pipelines: Extract, Discovery, Solution Design](illustrations/pipelines.png)
+
 *Fig. 1. Three pipelines — Extract, Discovery, and Solution Design — all orchestrated by Python runners. Extract and Discovery share Phase 0 and Phase 1 (parallel source extraction). Solution Design takes a finished requirements doc as input.*
 
 Two modes, same input:
@@ -254,6 +256,8 @@ project/
 
 ### Extract Mode
 
+![Fig. 2. Extract pipeline — scan, parallel extraction, synthesis, critic loop](illustrations/extract_pipeline.png)
+
 *Fig. 2. Extract pipeline — scan, parallel extraction, synthesis, critic loop.*
 
 ```
@@ -329,6 +333,8 @@ Phases 0 and 1 are identical to Extract mode.
 ---
 
 ### Solution Design Pipeline
+
+![Fig. 3. Solution Design pipeline — parallel multi-model generation, selection, critic loop](illustrations/solution_design_pipeline.png)
 
 *Fig. 3. Solution Design pipeline — parallel multi-model generation, selection, critic loop.*
 

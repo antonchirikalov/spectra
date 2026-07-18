@@ -16,6 +16,8 @@
 
 ## Пайплайны
 
+![Рис. 1. Три пайплайна: Extract, Discovery, Solution Design](illustrations/pipelines.png)
+
 *Рис. 1. Три пайплайна — Extract, Discovery и Solution Design — все управляются Python-оркестраторами. Extract и Discovery разделяют Фазу 0 и Фазу 1 (параллельное извлечение из источников). Solution Design принимает готовый документ с требованиями на вход.*
 
 Два режима, одна входная папка:
@@ -254,6 +256,8 @@ project/
 
 ### Режим Extract
 
+![Рис. 2. Пайплайн Extract — сканирование, параллельное извлечение, синтез, цикл критика](illustrations/extract_pipeline.png)
+
 *Рис. 2. Пайплайн Extract — сканирование, параллельное извлечение, синтез, цикл критика.*
 
 ```
@@ -329,6 +333,8 @@ VERDICT: REVISE
 ---
 
 ### Пайплайн Solution Design
+
+![Рис. 3. Пайплайн Solution Design — параллельная генерация несколькими моделями, отбор, цикл критика](illustrations/solution_design_pipeline.png)
 
 *Рис. 3. Пайплайн Solution Design — параллельная генерация несколькими моделями, отбор, цикл критика.*
 
