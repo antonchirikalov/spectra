@@ -60,7 +60,7 @@ cp models.yaml.example models.yaml
 # Запустить Solution Design с несколькими моделями (параллельно)
 .venv/bin/python3 solution_design_runner.py run \
   /путь/до/requirements_YYYYMMDD_HHMMSS/_requirements.md \
-  --models kimi/kimi-k3 openai/gpt-4o
+  --models kimi/kimi-k3 openai/gpt-5.5
 
 # Проверить статус запуска
 .venv/bin/python3 requirements_runner.py status \
@@ -100,7 +100,7 @@ copy models.yaml.example models.yaml
 .venv\Scripts\python requirements_runner.py run C:\путь\до\папки\с\документами
 
 # Использовать конкретную модель
-.venv\Scripts\python requirements_runner.py run C:\путь\до\папки\с\документами --model openai/gpt-4.1
+.venv\Scripts\python requirements_runner.py run C:\путь\до\папки\с\документами --model openai/gpt-5.5
 
 # Ограничить параллелизм (по умолчанию 3)
 .venv\Scripts\python requirements_runner.py run C:\путь\до\папки\с\документами --workers 2
@@ -142,7 +142,7 @@ cp .env.example .env
 | Провайдер | Переменная | Модели | Примечание |
 |---|---|---|---|
 | Moonshot | `MOONSHOT_API_KEY` | `kimi/kimi-k3` | По умолчанию — лучший agentic-бенчмарк |
-| OpenAI | `OPENAI_API_KEY` | `openai/gpt-4o`, `openai/gpt-4.1` | Хорошо для агентов-критиков |
+| OpenAI | `OPENAI_API_KEY` | `openai/gpt-5.5` | Хорошо для агентов-критиков |
 | DeepSeek | `DEEPSEEK_API_KEY` | `deepseek/deepseek-chat`, `deepseek/deepseek-reasoner` | Дешевле всего для больших объёмов |
 | Qwen | `QWEN_API_KEY` | `qwen/qwen3.6-plus` | Контекст 1M, большие наборы документов |
 | Anthropic | `ANTHROPIC_API_KEY` | `anthropic/claude-sonnet-4-6` | Через CLI `claude` |
@@ -173,13 +173,6 @@ chcp 65001
 set PYTHONIOENCODING=utf-8
 .venv\Scripts\python requirements_runner.py run C:\путь\до\входных_данных
 ```
-
-### Оплата провайдеров
-
-- **Moonshot / Kimi:** подписка на `kimi.com` **не равна** балансу API на `platform.moonshot.ai`. `opencode` расходует именно **API-баланс** на `platform.moonshot.ai`. Пополняйте его, если видите ошибки 401/429.
-- **OpenAI:** баланс расходуется со стандартной страницы биллинга OpenAI API.
-
-Раннер распознаёт ошибки API, которые выдаёт `opencode` (например, `database is locked`, 401/429), и помечает шаг как упавший вместо того, чтобы висеть до таймаута.
 
 ---
 
@@ -242,7 +235,7 @@ project/
   solution_design_20260604_160312/
     _solution_design.md                   ← финальный документ
     _design_kimi_kimi-k3.md             ← кандидат Фазы 1
-    _design_openai_gpt-4o.md              ← кандидат Фазы 1 (при --models)
+    _design_openai_gpt-5_5.md            ← кандидат Фазы 1 (при --models)
     _selection_report.md                  ← WINNING_MODEL: ...
     _verdict_round1.md                    ← вердикт критика
     state.json
@@ -352,11 +345,11 @@ VERDICT: REVISE
 ```bash
 # Два дизайна параллельно
 python3 solution_design_runner.py run _requirements.md \
-  --models kimi/kimi-k3 openai/gpt-4o
+  --models kimi/kimi-k3 openai/gpt-5.5
 
 # Три дизайна параллельно
 python3 solution_design_runner.py run _requirements.md \
-  --models kimi/kimi-k3 openai/gpt-4o openai/gpt-4.1
+  --models kimi/kimi-k3 openai/gpt-5.5 kimi/kimi-k2.7-code
 ```
 
 Если одна из моделей упала, пайплайн продолжает работу с остальными.

@@ -60,7 +60,7 @@ cp models.yaml.example models.yaml
 # Run solution design with multiple models (parallel)
 .venv/bin/python3 solution_design_runner.py run \
   /path/to/requirements_YYYYMMDD_HHMMSS/_requirements.md \
-  --models kimi/kimi-k3 openai/gpt-4o
+  --models kimi/kimi-k3 openai/gpt-5.5
 
 # Check run status
 .venv/bin/python3 requirements_runner.py status \
@@ -100,7 +100,7 @@ copy models.yaml.example models.yaml
 .venv\Scripts\python requirements_runner.py run C:\path\to\input\folder
 
 # Use a specific model
-.venv\Scripts\python requirements_runner.py run C:\path\to\input\folder --model openai/gpt-4.1
+.venv\Scripts\python requirements_runner.py run C:\path\to\input\folder --model openai/gpt-5.5
 
 # Limit parallelism (default is 3)
 .venv\Scripts\python requirements_runner.py run C:\path\to\input\folder --workers 2
@@ -142,7 +142,7 @@ Edit `.env` — add keys for the providers you want to use:
 | Provider | Key | Models | Notes |
 |---|---|---|---|
 | Moonshot | `MOONSHOT_API_KEY` | `kimi/kimi-k3` | Default — best agentic benchmark |
-| OpenAI | `OPENAI_API_KEY` | `openai/gpt-4o`, `openai/gpt-4.1` | Good for critic agents |
+| OpenAI | `OPENAI_API_KEY` | `openai/gpt-5.5` | Good for critic agents |
 | DeepSeek | `DEEPSEEK_API_KEY` | `deepseek/deepseek-chat`, `deepseek/deepseek-reasoner` | Cheapest for high volume |
 | Qwen | `QWEN_API_KEY` | `qwen/qwen3.6-plus` | 1M context, large doc sets |
 | Anthropic | `ANTHROPIC_API_KEY` | `anthropic/claude-sonnet-4-6` | Via `claude` CLI |
@@ -173,13 +173,6 @@ chcp 65001
 set PYTHONIOENCODING=utf-8
 .venv\Scripts\python requirements_runner.py run C:\path\to\input
 ```
-
-### Provider Billing Notes
-
-- **Moonshot / Kimi:** a subscription on `kimi.com` is **not** the same as an API balance on `platform.moonshot.ai`. `opencode` consumes the **API balance** on `platform.moonshot.ai`. Top up there if you see 401/429 errors.
-- **OpenAI:** balance is consumed from the standard OpenAI API billing page.
-
-The runner detects API errors emitted by `opencode` (e.g. `database is locked`, 401/429) and marks the step as failed instead of hanging until timeout.
 
 ---
 
@@ -242,7 +235,7 @@ project/
   solution_design_20260604_160312/
     _solution_design.md                   ← final deliverable
     _design_kimi_kimi-k3.md             ← Phase 1 candidate
-    _design_openai_gpt-4o.md              ← Phase 1 candidate (if --models)
+    _design_openai_gpt-5_5.md            ← Phase 1 candidate (if --models)
     _selection_report.md                  ← WINNING_MODEL: ...
     _verdict_round1.md                    ← critic verdict
     state.json
@@ -352,11 +345,11 @@ Default: `kimi/kimi-k3`. Override:
 ```bash
 # Two designs in parallel
 python3 solution_design_runner.py run _requirements.md \
-  --models kimi/kimi-k3 openai/gpt-4o
+  --models kimi/kimi-k3 openai/gpt-5.5
 
 # Three designs in parallel
 python3 solution_design_runner.py run _requirements.md \
-  --models kimi/kimi-k3 openai/gpt-4o openai/gpt-4.1
+  --models kimi/kimi-k3 openai/gpt-5.5 kimi/kimi-k2.7-code
 ```
 
 If one model fails, the pipeline continues with the survivors.

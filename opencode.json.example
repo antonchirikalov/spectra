@@ -10,15 +10,15 @@
         "apiKey": "{env:MOONSHOT_API_KEY}"
       },
       "models": {
-        "kimi-k3": { "name": "Kimi K3" }
+        "kimi-k3": { "name": "Kimi K3" },
+        "kimi-k2.7-code": { "name": "Kimi K2.7 Code" }
       }
     },
     "openai": {
       "npm": "@ai-sdk/openai",
       "options": { "apiKey": "{env:OPENAI_API_KEY}" },
       "models": {
-        "gpt-4o":  { "name": "GPT-4o" },
-        "gpt-4.1": { "name": "GPT-4.1" }
+        "gpt-5.5": { "name": "GPT-5.5" }
       }
     }
   },
