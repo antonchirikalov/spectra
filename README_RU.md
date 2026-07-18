@@ -60,7 +60,7 @@ cp models.yaml.example models.yaml
 # Запустить Solution Design с несколькими моделями (параллельно)
 .venv/bin/python3 solution_design_runner.py run \
   /путь/до/requirements_YYYYMMDD_HHMMSS/_requirements.md \
-  --models kimi/kimi-k3 openai/gpt-5.5
+  --models kimi/kimi-k3 openai/gpt-5.6
 
 # Проверить статус запуска
 .venv/bin/python3 requirements_runner.py status \
@@ -100,7 +100,7 @@ copy models.yaml.example models.yaml
 .venv\Scripts\python requirements_runner.py run C:\путь\до\папки\с\документами
 
 # Использовать конкретную модель
-.venv\Scripts\python requirements_runner.py run C:\путь\до\папки\с\документами --model openai/gpt-5.5
+.venv\Scripts\python requirements_runner.py run C:\путь\до\папки\с\документами --model openai/gpt-5.6
 
 # Ограничить параллелизм (по умолчанию 3)
 .venv\Scripts\python requirements_runner.py run C:\путь\до\папки\с\документами --workers 2
@@ -141,11 +141,11 @@ cp .env.example .env
 
 | Провайдер | Переменная | Модели | Примечание |
 |---|---|---|---|
-| Moonshot | `MOONSHOT_API_KEY` | `kimi/kimi-k3` | По умолчанию — лучший agentic-бенчмарк |
-| OpenAI | `OPENAI_API_KEY` | `openai/gpt-5.5` | Хорошо для агентов-критиков |
+| Moonshot | `MOONSHOT_API_KEY` | `kimi/kimi-k3`, `kimi/kimi-k2.7-code` | По умолчанию — лучший agentic-бенчмарк |
+| OpenAI | `OPENAI_API_KEY` | `openai/gpt-5.6` | Хорошо для агентов-критиков |
 | DeepSeek | `DEEPSEEK_API_KEY` | `deepseek/deepseek-chat`, `deepseek/deepseek-reasoner` | Дешевле всего для больших объёмов |
 | Qwen | `QWEN_API_KEY` | `qwen/qwen3.6-plus` | Контекст 1M, большие наборы документов |
-| Anthropic | `ANTHROPIC_API_KEY` | `anthropic/claude-sonnet-4-6` | Через CLI `claude` |
+| Anthropic | `ANTHROPIC_API_KEY` | `anthropic/claude-opus-4.8`, `anthropic/claude-sonnet-5` | Через CLI `claude` |
 | Fireworks | `FIREWORKS_API_KEY` | `kimi/kimi-k3`, любые open-weight | US-хостинг, соответствие data residency |
 
 Для интеграций добавьте:
@@ -156,13 +156,15 @@ JIRA_TOKEN=...         # Jira MCP
 
 ### MCP-серверы (опционально, но рекомендуется)
 
-| Сервер | Назначение | Нужен для |
+| Сервер | Назначение | Используется |
 |---|---|---|
-| `pdf-reader` | Чтение PDF напрямую | Исходные PDF-файлы |
-| `tavily-remote` | Веб-поиск в процессе работы | arch_probe, solution_designer |
-| `mcp-atlassian` | Загрузка страниц Confluence по URL | Источники в Confluence |
+| `pdf-reader` | Чтение PDF напрямую | `source_processor` (источники `.pdf`) |
+| `excel` | Чтение `.xlsx` по листам | `source_processor` (источники `.xlsx`) |
+| `tavily-remote` | Веб-поиск в процессе работы | `requirements_writer`, `arch_probe`, `solution_designer`, `word_form_builder` |
+| `mcp-atlassian` | Загрузка страниц Confluence/Jira | `source_processor` (URL-источники) |
+| `docx-mcp` | Создание/правка Word-документов | `word_form_builder` (standalone) |
 
-Настраиваются в `opencode.json` — при необходимости скорректируйте пути под свою систему.
+Все агенты пайплайна также используют встроенный инструмент `read` (текст/markdown и авто-конвертируемые `.docx`/`.pptx`) и `vision` (изображения). Настраиваются в `opencode.json` — при необходимости скорректируйте пути под свою систему.
 
 ### Замечания для Windows
 
@@ -184,7 +186,7 @@ set PYTHONIOENCODING=utf-8
 |---|---|
 | `.pdf` | MCP-инструмент `pdf-reader` |
 | `.xlsx` | MCP-сервер `excel` |
-| `.docx` / `.pptx` | `docx-mcp` / инструмент `read` |
+| `.docx` / `.pptx` | инструмент `read` (авто-конвертация в opencode) |
 | `.md` / `.txt` | Инструмент `read` |
 | `.png` / `.jpg` / `.jpeg` / `.webp` | Vision (мультимодальность) |
 | Подпапки | Один логический источник (один агент на папку) |
@@ -345,11 +347,11 @@ VERDICT: REVISE
 ```bash
 # Два дизайна параллельно
 python3 solution_design_runner.py run _requirements.md \
-  --models kimi/kimi-k3 openai/gpt-5.5
+  --models kimi/kimi-k3 openai/gpt-5.6
 
 # Три дизайна параллельно
 python3 solution_design_runner.py run _requirements.md \
-  --models kimi/kimi-k3 openai/gpt-5.5 kimi/kimi-k2.7-code
+  --models kimi/kimi-k3 openai/gpt-5.6 kimi/kimi-k2.7-code
 ```
 
 Если одна из моделей упала, пайплайн продолжает работу с остальными.
@@ -466,12 +468,12 @@ default_model: kimi/kimi-k3          # дефолт для всего
 
 agents: {}                           # per-agent закрепления для requirements pipeline
 # agents:
-#   requirements_critic: openai/gpt-5.5   # критик на другой модели
+#   requirements_critic: openai/gpt-5.6   # критик на другой модели
 
 solution_design:
   designer_models:                   # одна строка = один параллельный кандидат Фазы 1
     - kimi/kimi-k3
-    # - openai/gpt-5.5               # раскомментируйте для конкурса 2 моделей
+    # - openai/gpt-5.6               # раскомментируйте для конкурса 2 моделей
   selector_model: kimi/kimi-k3       # выбирает лучшего кандидата (когда их >1)
   critic_model: kimi/kimi-k3         # критик дизайна; ревизия идёт на winning_model
 ```
@@ -494,8 +496,8 @@ models:
 # Смешанный: Kimi + Claude на критически важных агентах
 models:
   source_processor:         deepseek/deepseek-chat
-  requirements_writer:      anthropic/claude-sonnet-4-6
-  requirements_critic:      anthropic/claude-sonnet-4-6
+  requirements_writer:      anthropic/claude-opus-4.8
+  requirements_critic:      anthropic/claude-opus-4.8
 ```
 
 Пустой `models: {}` → агенты наследуют `models.yaml` (по умолчанию `kimi/kimi-k3`).

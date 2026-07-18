@@ -60,7 +60,7 @@ cp models.yaml.example models.yaml
 # Run solution design with multiple models (parallel)
 .venv/bin/python3 solution_design_runner.py run \
   /path/to/requirements_YYYYMMDD_HHMMSS/_requirements.md \
-  --models kimi/kimi-k3 openai/gpt-5.5
+  --models kimi/kimi-k3 openai/gpt-5.6
 
 # Check run status
 .venv/bin/python3 requirements_runner.py status \
@@ -100,7 +100,7 @@ copy models.yaml.example models.yaml
 .venv\Scripts\python requirements_runner.py run C:\path\to\input\folder
 
 # Use a specific model
-.venv\Scripts\python requirements_runner.py run C:\path\to\input\folder --model openai/gpt-5.5
+.venv\Scripts\python requirements_runner.py run C:\path\to\input\folder --model openai/gpt-5.6
 
 # Limit parallelism (default is 3)
 .venv\Scripts\python requirements_runner.py run C:\path\to\input\folder --workers 2
@@ -141,11 +141,11 @@ Edit `.env` — add keys for the providers you want to use:
 
 | Provider | Key | Models | Notes |
 |---|---|---|---|
-| Moonshot | `MOONSHOT_API_KEY` | `kimi/kimi-k3` | Default — best agentic benchmark |
-| OpenAI | `OPENAI_API_KEY` | `openai/gpt-5.5` | Good for critic agents |
+| Moonshot | `MOONSHOT_API_KEY` | `kimi/kimi-k3`, `kimi/kimi-k2.7-code` | Default — best agentic benchmark |
+| OpenAI | `OPENAI_API_KEY` | `openai/gpt-5.6` | Good for critic agents |
 | DeepSeek | `DEEPSEEK_API_KEY` | `deepseek/deepseek-chat`, `deepseek/deepseek-reasoner` | Cheapest for high volume |
 | Qwen | `QWEN_API_KEY` | `qwen/qwen3.6-plus` | 1M context, large doc sets |
-| Anthropic | `ANTHROPIC_API_KEY` | `anthropic/claude-sonnet-4-6` | Via `claude` CLI |
+| Anthropic | `ANTHROPIC_API_KEY` | `anthropic/claude-opus-4.8`, `anthropic/claude-sonnet-5` | Via `claude` CLI |
 | Fireworks | `FIREWORKS_API_KEY` | `kimi/kimi-k3`, any open weight | US-hosted, data residency |
 
 Also add if using integrations:
@@ -156,13 +156,15 @@ JIRA_TOKEN=...         # Jira MCP
 
 ### MCP Servers (optional but recommended)
 
-| Server | Purpose | Required for |
+| Server | Purpose | Used by |
 |---|---|---|
-| `pdf-reader` | Read PDF documents natively | Source PDFs |
-| `tavily-remote` | Web search during research | arch_probe, solution_designer |
-| `mcp-atlassian` | Fetch Confluence pages by URL | Confluence source docs |
+| `pdf-reader` | Read PDF documents natively | `source_processor` (`.pdf` sources) |
+| `excel` | Read `.xlsx` workbooks sheet-by-sheet | `source_processor` (`.xlsx` sources) |
+| `tavily-remote` | Web search during research | `requirements_writer`, `arch_probe`, `solution_designer`, `word_form_builder` |
+| `mcp-atlassian` | Fetch Confluence/Jira pages | `source_processor` (URL inputs) |
+| `docx-mcp` | Create/edit Word documents | `word_form_builder` (standalone) |
 
-Configured in `opencode.json` — edit paths if your system differs.
+All pipeline agents also use the built-in `read` tool (plain text/markdown and auto-converted `.docx`/`.pptx`) and `vision` (images). Configured in `opencode.json` — edit paths if your system differs.
 
 ### Windows Notes
 
@@ -184,7 +186,7 @@ Drop any combination of files into a folder and pass it to `requirements_runner.
 |---|---|
 | `.pdf` | `pdf-reader` MCP tool |
 | `.xlsx` | `excel` MCP server |
-| `.docx` / `.pptx` | `docx-mcp` / `read` tool |
+| `.docx` / `.pptx` | `read` tool (auto-converted by opencode) |
 | `.md` / `.txt` | `read` tool |
 | `.png` / `.jpg` / `.jpeg` / `.webp` | Vision (multimodal) |
 | Subfolders | Treated as one logical source (one agent per folder) |
@@ -345,11 +347,11 @@ Default: `kimi/kimi-k3`. Override:
 ```bash
 # Two designs in parallel
 python3 solution_design_runner.py run _requirements.md \
-  --models kimi/kimi-k3 openai/gpt-5.5
+  --models kimi/kimi-k3 openai/gpt-5.6
 
 # Three designs in parallel
 python3 solution_design_runner.py run _requirements.md \
-  --models kimi/kimi-k3 openai/gpt-5.5 kimi/kimi-k2.7-code
+  --models kimi/kimi-k3 openai/gpt-5.6 kimi/kimi-k2.7-code
 ```
 
 If one model fails, the pipeline continues with the survivors.
@@ -466,12 +468,12 @@ default_model: kimi/kimi-k3          # fallback for everything
 
 agents: {}                           # per-agent pins for requirements pipeline
 # agents:
-#   requirements_critic: openai/gpt-5.5   # critic on a different model
+#   requirements_critic: openai/gpt-5.6   # critic on a different model
 
 solution_design:
   designer_models:                   # one line = one parallel Phase-1 candidate
     - kimi/kimi-k3
-    # - openai/gpt-5.5               # uncomment for a 2-model competition
+    # - openai/gpt-5.6               # uncomment for a 2-model competition
   selector_model: kimi/kimi-k3       # picks the best candidate (when >1)
   critic_model: kimi/kimi-k3         # design critic; revision reuses the winning model
 ```
@@ -494,8 +496,8 @@ models:
 # Mixed: Kimi + Claude on quality-critical agents
 models:
   source_processor:         deepseek/deepseek-chat
-  requirements_writer:      anthropic/claude-sonnet-4-6
-  requirements_critic:      anthropic/claude-sonnet-4-6
+  requirements_writer:      anthropic/claude-opus-4.8
+  requirements_critic:      anthropic/claude-opus-4.8
 ```
 
 Empty `models: {}` → agents inherit `models.yaml` (default: `kimi/kimi-k3`).

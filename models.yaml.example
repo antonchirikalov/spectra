@@ -5,7 +5,7 @@
 #   requirements_runner:      plan/params.yaml (в папке прогона) → CLI --model → этот файл
 #   solution_design_runner:   CLI --models → этот файл
 # Формат модели: provider/model-id (провайдеры задаются в .opencode/opencode.json,
-# ключи — в .env). Доступные из коробки: kimi/kimi-k3, kimi/kimi-k2.7-code, openai/gpt-5.5
+# ключи — в .env). Доступные из коробки: kimi/kimi-k3, kimi/kimi-k2.7-code, openai/gpt-5.6
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Дефолт для всех агентов, если нет более точечного оверрайда
@@ -18,9 +18,9 @@ agents: {}
 # agents:
 #   source_processor: kimi/kimi-k3       # извлечение фактов из источников
 #   requirements_writer: kimi/kimi-k3    # сборка _requirements.md
-#   requirements_critic: openai/gpt-5.5  # критик на другой модели — не самопроверяется
+#   requirements_critic: openai/gpt-5.6  # критик на другой модели — не самопроверяется
 #   arch_probe: kimi/kimi-k3             # discovery: генерация вопросов
-#   arch_critic: openai/gpt-5.5          # discovery: discovery_report.md
+#   arch_critic: openai/gpt-5.6          # discovery: discovery_report.md
 
 # Solution design pipeline
 solution_design:
@@ -28,6 +28,6 @@ solution_design:
   # Одна строка — один дизайн без конкурса; две+ — selector выберет лучший.
   designer_models:
     - kimi/kimi-k3
-    # - openai/gpt-5.5
+    # - openai/gpt-5.6
   selector_model: kimi/kimi-k3   # выбирает лучшего кандидата (когда их >1)
   critic_model: kimi/kimi-k3     # критик дизайна; revision всегда идёт на winning_model
