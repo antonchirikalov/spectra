@@ -1,6 +1,7 @@
 .env
 opencode.json
 models.yaml
+spectra.code-workspace
 __pycache__/
 *.pyc
 .venv/
