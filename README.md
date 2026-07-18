@@ -2,7 +2,9 @@
 
 **spectra** takes a folder of raw client documents — RFPs, proposals, meeting notes, PDFs, spreadsheets, images — and produces polished technical deliverables: a structured requirements spec, a curated set of architect discovery questions, and a full solution design proposal. Drop files in, the pipeline runs, documents come out.
 
-Internally it is a multi-agent AI system. **opencode** CLI agents do the reading and writing — any model from any provider works: Kimi K3, DeepSeek, GPT, Claude, Qwen, or a local model via Ollama. Python runners handle orchestration — phase ordering, parallelism, crash recovery, and retry logic. Every hand-off between phases is a file on disk, so any step can be resumed after a failure without re-running completed work.
+## Architecture in 30 seconds
+
+Two Python **runners** (orchestrators) drive pipelines of LLM agents. On start, a runner spawns one shared **`opencode serve`** process and talks to it over **HTTP REST + SSE** — each agent step runs as its own session on that server: no per-step process spawns, live progress from server-sent events, clean aborts via API. Agents themselves are markdown definitions in `.opencode/agents/` and can use any model from any provider (Kimi K3, DeepSeek, GPT, Claude, Qwen, or a local model via Ollama). Models are routed declaratively in **`models.yaml`** (required `default_model`, per-agent pins, N designer candidates for Solution Design). Every hand-off between phases is a file on disk, and every step checkpoints into an atomic **`state.json`** ledger — an interrupted run resumes exactly where it stopped. A legacy `subprocess` transport (one `opencode run` per step) remains as `--transport subprocess` fallback.
 
 Three pipelines, same input folder:
 
@@ -458,13 +460,13 @@ All models use `provider/model-id` format. The runner passes it to the agent inv
 
 ### Global routing (`models.yaml`, repo root)
 
-Single place for model routing across both runners. The file is git-ignored (local config) — create it once with `cp models.yaml.example models.yaml`. Resolution priority:
+Single place for model routing across both runners. The file is git-ignored (local config) — create it once with `cp models.yaml.example models.yaml`. **Required**: `run`/`resume` refuse to start without it (`default_model` must be set — there is no hardcoded fallback). Resolution priority:
 
 - `requirements_runner`: run-level `plan/params.yaml` → CLI `--model` → `models.yaml`
 - `solution_design_runner`: CLI `--models` → `models.yaml`
 
 ```yaml
-default_model: kimi/kimi-k3          # fallback for everything
+default_model: kimi/kimi-k3          # required — fallback for everything not pinned below
 
 agents: {}                           # per-agent pins for requirements pipeline
 # agents:

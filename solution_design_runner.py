@@ -64,7 +64,12 @@ MIN_OUTPUT_BYTES = 200
 import model_config as _mc
 
 _MODEL_CFG = _mc.load_model_config(REPO_ROOT)
-DEFAULT_MODEL = _mc.default_model(_MODEL_CFG)
+try:
+    DEFAULT_MODEL = _mc.default_model(_MODEL_CFG)
+    DESIGNER_MODELS = _mc.designer_models(_MODEL_CFG)
+except _mc.ModelConfigError:
+    DEFAULT_MODEL = None  # run/resume re-validate at startup and refuse to start
+    DESIGNER_MODELS = []
 
 
 def _find_opencode() -> str:
@@ -75,8 +80,6 @@ def _find_opencode() -> str:
 
 
 OPENCODE_EXE = _find_opencode()
-
-DESIGNER_MODELS = _mc.designer_models(_MODEL_CFG)
 
 # ── Serve transport (opencode serve + HTTP API; see docs/SPEC_SERVE_API.md) ────
 _TRANSPORT = "serve"                # "subprocess" | "serve" (CLI --transport); serve is default
@@ -853,6 +856,13 @@ def main() -> None:
         print("[INFO] Using serve transport (opencode serve + HTTP API)")
     else:
         print("[INFO] Using legacy subprocess transport (one opencode run per step)")
+
+    if args.command in ("run", "resume"):
+        try:
+            _mc.require_model_config(REPO_ROOT, _MODEL_CFG)
+        except _mc.ModelConfigError as e:
+            print(f"[ERROR] {e}", file=sys.stderr)
+            sys.exit(1)
 
     log_level = "DEBUG" if getattr(args, "verbose", False) else "INFO"
     logger.add(sys.stderr, level=log_level, colorize=True,

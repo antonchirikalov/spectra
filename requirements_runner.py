@@ -65,7 +65,10 @@ MIN_OUTPUT_BYTES = 200
 import model_config as _mc
 
 _MODEL_CFG = _mc.load_model_config(REPO_ROOT)
-DEFAULT_MODEL = _mc.default_model(_MODEL_CFG)
+try:
+    DEFAULT_MODEL = _mc.default_model(_MODEL_CFG)
+except _mc.ModelConfigError:
+    DEFAULT_MODEL = None  # run/resume re-validate at startup and refuse to start
 
 # On Windows, subprocess can't find .cmd wrappers without shell=True — resolve once.
 def _find_opencode() -> str:
@@ -1690,6 +1693,13 @@ def main():
         print("[INFO] Using serve transport (opencode serve + HTTP API)")
     else:
         print("[INFO] Using legacy subprocess transport (one opencode run per step)")
+
+    if args.command in ("run", "resume"):
+        try:
+            _mc.require_model_config(REPO_ROOT, _MODEL_CFG)
+        except _mc.ModelConfigError as e:
+            print(f"[ERROR] {e}", file=sys.stderr)
+            return 1
 
     debug = getattr(args, "debug", False)
     logger.add(sys.stderr, level="DEBUG" if debug else "INFO", colorize=True,
