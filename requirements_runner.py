@@ -61,7 +61,11 @@ REPO_ROOT = Path(__file__).resolve().parent
 AGENT_TIMEOUT_S = 3600          # 60 min per agent — large PDFs can take 8-10 min
 MAX_CRITIC_ROUNDS = 5
 MIN_OUTPUT_BYTES = 200
-DEFAULT_MODEL = "kimi/kimi-k3"
+
+import model_config as _mc
+
+_MODEL_CFG = _mc.load_model_config(REPO_ROOT)
+DEFAULT_MODEL = _mc.default_model(_MODEL_CFG)
 
 # On Windows, subprocess can't find .cmd wrappers without shell=True — resolve once.
 def _find_opencode() -> str:
@@ -73,7 +77,7 @@ def _find_opencode() -> str:
 OPENCODE_EXE = _find_opencode()
 
 # ── Serve transport (opencode serve + HTTP API; see docs/SPEC_SERVE_API.md) ────
-_TRANSPORT = "subprocess"          # "subprocess" | "serve" (CLI --transport)
+_TRANSPORT = "serve"                # "subprocess" | "serve" (CLI --transport); serve is default
 _SERVER = None                     # OpencodeServer, lazily started
 _SERVER_LOCK = threading.Lock()    # guards lazy init (Phase 1 threads race here)
 _ROOT_SESSION = None               # parent session grouping all run steps
@@ -598,7 +602,8 @@ project_type: software
 domain_tags: []
 
 # Per-agent model overrides — format: provider/model-id
-# Leave empty to use DEFAULT_MODEL (kimi/kimi-k3) for all agents
+# Highest priority: beats CLI --model and repo-level models.yaml.
+# Leave empty to inherit models.yaml (default_model: kimi/kimi-k3)
 models: {}
 
 trust_policy:
@@ -633,14 +638,17 @@ AGENT_NAMES = [
 
 
 def model_for(agent_name: str, params: dict) -> str:
-    return (params.get("models") or {}).get(agent_name, DEFAULT_MODEL)
+    """Per-run params.yaml → models.yaml agents → models.yaml default_model."""
+    m = (params.get("models") or {}).get(agent_name)
+    return m or _mc.agent_model(agent_name, _MODEL_CFG)
 
 
 def apply_cli_model(params: dict, cli_model: str) -> dict:
-    """Inject cli_model as default for any agent not already overridden in params."""
+    """Inject cli_model for agents not pinned in params.yaml or models.yaml."""
     models = dict(params.get("models") or {})
+    cfg_agents = _MODEL_CFG.get("agents") or {}
     for agent in AGENT_NAMES:
-        if agent not in models:
+        if agent not in models and agent not in cfg_agents:
             models[agent] = cli_model
     return {**params, "models": models}
 
@@ -1418,7 +1426,8 @@ def run_discovery(project_dir: Path, interactive: bool, cli_model: str = None) -
     intake_dir.mkdir(parents=True, exist_ok=True)
     (intake_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    warmup_opencode()
+    if _TRANSPORT == "subprocess":
+        warmup_opencode()
     print("[PHASE:1] Starting source extraction ...")
     results = run_phase1(entries, project_dir, artifacts_dir, params, interactive)
 
@@ -1646,10 +1655,10 @@ def main():
              "Per-agent overrides in params.yaml take precedence.",
     )
     run_p.add_argument(
-        "--transport", choices=["subprocess", "serve"], default="subprocess",
-        help="Agent call transport: one 'opencode run' process per step "
-             "(subprocess, current default) or one shared 'opencode serve' "
-             "server + HTTP API (serve, new).",
+        "--transport", choices=["subprocess", "serve"], default="serve",
+        help="Agent call transport: one shared 'opencode serve' server + "
+             "HTTP API (serve, default) or one 'opencode run' process per "
+             "step (subprocess, legacy fallback).",
     )
 
     res_p = sub.add_parser("resume", help="Resume an interrupted run")
@@ -1666,7 +1675,7 @@ def main():
         help="Override model for all agents on resume.",
     )
     res_p.add_argument(
-        "--transport", choices=["subprocess", "serve"], default="subprocess",
+        "--transport", choices=["subprocess", "serve"], default="serve",
         help="Agent call transport on resume (see 'run --transport').",
     )
 
@@ -1676,9 +1685,11 @@ def main():
     args = parser.parse_args()
 
     global _TRANSPORT
-    _TRANSPORT = getattr(args, "transport", "subprocess")
+    _TRANSPORT = getattr(args, "transport", "serve")
     if _TRANSPORT == "serve":
-        print(f"[INFO] Using serve transport (opencode serve + HTTP API)")
+        print("[INFO] Using serve transport (opencode serve + HTTP API)")
+    else:
+        print("[INFO] Using legacy subprocess transport (one opencode run per step)")
 
     debug = getattr(args, "debug", False)
     logger.add(sys.stderr, level="DEBUG" if debug else "INFO", colorize=True,
@@ -1748,7 +1759,8 @@ def main():
         if not check_mcp_pdf_reader():
             print("[WARN] pdf-reader MCP not found in opencode.json — PDFs may fail.")
 
-    warmup_opencode()
+    if _TRANSPORT == "subprocess":
+        warmup_opencode()
     print("[PHASE:1] Starting source extraction ...")
     results = run_phase1(entries, project_dir, artifacts_dir, params,
                          args.interactive, ledger=ledger, max_workers=args.workers)

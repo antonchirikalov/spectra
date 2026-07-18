@@ -2,7 +2,7 @@
 
 **spectra** takes a folder of raw client documents — RFPs, proposals, meeting notes, PDFs, spreadsheets, images — and produces polished technical deliverables: a structured requirements spec, a curated set of architect discovery questions, and a full solution design proposal. Drop files in, the pipeline runs, documents come out.
 
-Internally it is a multi-agent AI system. **opencode** CLI agents do the reading and writing — any model from any provider works: Kimi K2.6, DeepSeek, GPT-4o, Claude, Qwen, or a local model via Ollama. Python runners handle orchestration — phase ordering, parallelism, crash recovery, and retry logic. Every hand-off between phases is a file on disk, so any step can be resumed after a failure without re-running completed work.
+Internally it is a multi-agent AI system. **opencode** CLI agents do the reading and writing — any model from any provider works: Kimi K3, DeepSeek, GPT, Claude, Qwen, or a local model via Ollama. Python runners handle orchestration — phase ordering, parallelism, crash recovery, and retry logic. Every hand-off between phases is a file on disk, so any step can be resumed after a failure without re-running completed work.
 
 Three pipelines, same input folder:
 
@@ -15,8 +15,6 @@ Three pipelines, same input folder:
 ---
 
 ## Pipelines
-
-![Fig. 1. Three pipelines: Extract, Discovery, Solution Design](docs/illustrations/pipelines.png)
 
 *Fig. 1. Three pipelines — Extract, Discovery, and Solution Design — all orchestrated by Python runners. Extract and Discovery share Phase 0 and Phase 1 (parallel source extraction). Solution Design takes a finished requirements doc as input.*
 
@@ -42,6 +40,10 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 # Configure
 cp .env.example .env
 # → add at least one AI provider key (MOONSHOT_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, …)
+cp opencode.json.example .opencode/opencode.json
+# → review providers/models/MCP paths for your system
+cp models.yaml.example models.yaml
+# → model routing: default model, per-agent pins, SD designer candidates
 
 # Run requirements extraction
 .venv/bin/python3 requirements_runner.py run /path/to/input/folder
@@ -87,6 +89,10 @@ python -m venv .venv
 # Configure
 copy .env.example .env
 # → add at least one AI provider key (MOONSHOT_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, …)
+copy opencode.json.example .opencode\opencode.json
+# → review providers/models/MCP paths for your system
+copy models.yaml.example models.yaml
+# → model routing: default model, per-agent pins, SD designer candidates
 
 # Run requirements extraction
 .venv\Scripts\python requirements_runner.py run C:\path\to\input\folder
@@ -248,8 +254,6 @@ project/
 
 ### Extract Mode
 
-![Fig. 2. Extract pipeline — scan, parallel extraction, synthesis, critic loop](docs/illustrations/extract_pipeline.png)
-
 *Fig. 2. Extract pipeline — scan, parallel extraction, synthesis, critic loop.*
 
 ```
@@ -326,8 +330,6 @@ Phases 0 and 1 are identical to Extract mode.
 
 ### Solution Design Pipeline
 
-![Fig. 3. Solution Design pipeline — parallel multi-model generation, selection, critic loop](docs/illustrations/solution_design_pipeline.png)
-
 *Fig. 3. Solution Design pipeline — parallel multi-model generation, selection, critic loop.*
 
 ```
@@ -381,8 +383,10 @@ Prints paths to all artifacts, winning model, final verdict, and count of `<!-- 
 | `run` | `--workers` | 3 | Max parallel `source_processor` agents |
 | `run` | `--interactive` | off | Pause at HITL checkpoints |
 | `run` | `--debug` | off | DEBUG-level logging to stderr |
+| `run` | `--transport` | `serve` | Agent transport: shared `opencode serve` + HTTP API, or `subprocess` (legacy fallback) |
 | `resume` | `--model` | — | Override model on resume |
 | `resume` | `--workers` | 3 | Parallelism for remaining extract steps |
+| `resume` | `--transport` | `serve` | Same as `run --transport` |
 | `status` | `output_dir` | — | Step table: status, elapsed, tries, artifact/error |
 | `resume` | `output_dir` | — | Continue from where execution stopped |
 | `resume` | `--retry-failed` | off | Reset all `failed` steps to `pending` |
@@ -395,9 +399,11 @@ Prints paths to all artifacts, winning model, final verdict, and count of `<!-- 
 | `run` | `requirements_path` | — | Path to `_requirements.md` |
 | `run` | `--models MODEL [...]` | `kimi/kimi-k3` | Models for parallel Phase 1 |
 | `run` | `--verbose` / `-v` | off | DEBUG logging to stderr |
+| `run` | `--transport` | `serve` | Agent transport: shared `opencode serve` + HTTP API, or `subprocess` (legacy fallback) |
 | `status` | `output_dir` | — | Show step table |
 | `resume` | `output_dir` | — | Continue interrupted run |
 | `resume` | `--retry-failed` | off | Reset failed steps |
+| `resume` | `--transport` | `serve` | Same as `run --transport` |
 | `resume` | `--force-step STEP_ID` | — | Force-reset one step (e.g. `selector`, `critic:r2`) |
 
 ### Step IDs (for `--force-step`)
@@ -412,6 +418,16 @@ Prints paths to all artifacts, winning model, final verdict, and count of `<!-- 
 | solution design | `selector` | |
 | solution design | `critic:r<n>` | `critic:r1` |
 | solution design | `revision:r<n>` | `revision:r2` |
+
+---
+
+## Transport (serve vs subprocess)
+
+By default both runners talk to agents through a single shared `opencode serve` process (HTTP + SSE API; spec in `docs/SPEC_SERVE_API.md` — the `docs/` folder is local-only and not part of the git repo). One server is started lazily per runner invocation and stopped on exit; every agent step runs in its own session under a common root session `run-<run_id>`.
+
+- **Debugging live runs:** while a runner is working you can attach to the same server from another terminal with `opencode attach` (see the server URL/port in the runner log line `serve transport ready`) and inspect sessions, messages and tool calls in the TUI.
+- **Fallback:** `--transport subprocess` restores the old behavior (one `opencode run` process per agent step). Use it if the serve API misbehaves; the full rollback is `--transport subprocess` + `git revert` of the serve commits.
+- Permissions are auto-approved by the runner via the API (equivalent of `--dangerously-skip-permissions`); long steps heart-beat from SSE events instead of process stdout.
 
 ---
 
@@ -437,11 +453,33 @@ python3 requirements_runner.py resume output_dir/ --force-step critic:r2
 
 ## Model Routing
 
-All models use `provider/model-id` format. The runner passes it to `opencode run --model`. Providers are defined in `opencode.json`.
+All models use `provider/model-id` format. The runner passes it to the agent invocation (`POST /session/:id/message` model field on serve transport, or `opencode run --model` with the subprocess fallback). Providers are defined in `opencode.json`.
+
+### Global routing (`models.yaml`, repo root)
+
+Single place for model routing across both runners. The file is git-ignored (local config) — create it once with `cp models.yaml.example models.yaml`. Resolution priority:
+
+- `requirements_runner`: run-level `plan/params.yaml` → CLI `--model` → `models.yaml`
+- `solution_design_runner`: CLI `--models` → `models.yaml`
+
+```yaml
+default_model: kimi/kimi-k3          # fallback for everything
+
+agents: {}                           # per-agent pins for requirements pipeline
+# agents:
+#   requirements_critic: openai/gpt-5.5   # critic on a different model
+
+solution_design:
+  designer_models:                   # one line = one parallel Phase-1 candidate
+    - kimi/kimi-k3
+    # - openai/gpt-5.5               # uncomment for a 2-model competition
+  selector_model: kimi/kimi-k3       # picks the best candidate (when >1)
+  critic_model: kimi/kimi-k3         # design critic; revision reuses the winning model
+```
 
 ### Per-agent overrides (`plan/params.yaml`)
 
-Generated automatically on first run. Edit to route specific agents to specific models:
+Generated automatically on first run — these are **per-run** pins and beat everything else (CLI and `models.yaml`). Edit to route specific agents to specific models for that run only:
 
 ```yaml
 # Kimi everywhere (default)
@@ -453,19 +491,15 @@ models:
   arch_probe:               kimi/kimi-k3
   requirements_writer:      kimi/kimi-k3
   requirements_critic:      deepseek/deepseek-chat
-  solution_designer:        kimi/kimi-k3
-  solution_design_critic:   openai/gpt-4o            # strong critic
 
 # Mixed: Kimi + Claude on quality-critical agents
 models:
   source_processor:         deepseek/deepseek-chat
   requirements_writer:      anthropic/claude-sonnet-4-6
   requirements_critic:      anthropic/claude-sonnet-4-6
-  solution_designer:        kimi/kimi-k3
-  solution_design_critic:   anthropic/claude-sonnet-4-6
 ```
 
-Empty `models: {}` → all agents use `DEFAULT_MODEL = kimi/kimi-k3`.
+Empty `models: {}` → agents inherit `models.yaml` (default: `kimi/kimi-k3`).
 
 ### Adding a provider
 

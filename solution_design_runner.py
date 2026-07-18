@@ -21,6 +21,7 @@ Step IDs (for --force-step):
 """
 
 import argparse
+import atexit
 import json
 import os
 import re
@@ -59,7 +60,11 @@ REPO_ROOT = Path(__file__).resolve().parent
 AGENT_TIMEOUT_S = 3600
 MAX_CRITIC_ROUNDS = 3
 MIN_OUTPUT_BYTES = 200
-DEFAULT_MODEL = "kimi/kimi-k3"
+
+import model_config as _mc
+
+_MODEL_CFG = _mc.load_model_config(REPO_ROOT)
+DEFAULT_MODEL = _mc.default_model(_MODEL_CFG)
 
 
 def _find_opencode() -> str:
@@ -71,7 +76,80 @@ def _find_opencode() -> str:
 
 OPENCODE_EXE = _find_opencode()
 
-DESIGNER_MODELS = [DEFAULT_MODEL]
+DESIGNER_MODELS = _mc.designer_models(_MODEL_CFG)
+
+# ── Serve transport (opencode serve + HTTP API; see docs/SPEC_SERVE_API.md) ────
+_TRANSPORT = "serve"                # "subprocess" | "serve" (CLI --transport); serve is default
+_SERVER = None
+_SERVER_LOCK = threading.Lock()
+_ROOT_SESSION = None
+
+_SD_AGENTS = ("solution_designer", "solution_design_selector", "solution_design_critic")
+
+
+def _serve_server():
+    """Lazily start the shared opencode server and root session for this run."""
+    global _SERVER, _ROOT_SESSION
+    if _SERVER is not None:
+        return _SERVER
+    with _SERVER_LOCK:
+        if _SERVER is not None:
+            return _SERVER
+        from opencode_client import OpencodeServer
+        _SERVER = OpencodeServer(REPO_ROOT, required_agents=_SD_AGENTS,
+                                 required_mcp=("tavily-remote",))
+        _SERVER.start()
+        root = _SERVER.client.post(
+            "/session", json={"title": f"sd-{datetime.now():%Y%m%d-%H%M%S}"},
+            timeout=15).json()
+        _ROOT_SESSION = root.get("id")
+        atexit.register(_shutdown_serve)
+        logger.info(f"serve transport ready (root session {_ROOT_SESSION})")
+    return _SERVER
+
+
+def _shutdown_serve():
+    global _SERVER, _ROOT_SESSION
+    if _SERVER is not None:
+        _SERVER.stop()
+        _SERVER = None
+        _ROOT_SESSION = None
+
+
+def _run_step_serve(agent_name: str, prompt_file: Path, slug: str, model: str):
+    """One agent step via serve transport. Returns StepResult."""
+    import time as _time
+
+    server = _serve_server()
+    last_event = {"type": None}
+    t0 = _time.time()
+
+    def _on_event(ev):
+        props = ev.get("properties") or {}
+        if props.get("sessionID"):
+            last_event["type"] = ev.get("type")
+
+    def _watch():
+        while not done.is_set():
+            if done.wait(30):
+                return
+            el = int(_time.time() - t0)
+            print(f"[{datetime.now():%H:%M:%S}] [{slug}] running... {el}s elapsed"
+                  f" (last event: {last_event['type']})", flush=True)
+
+    done = threading.Event()
+    watcher = threading.Thread(target=_watch, daemon=True)
+    print(f"[{datetime.now():%H:%M:%S}] [{slug}] start", flush=True)
+    watcher.start()
+    try:
+        return server.run_step(
+            agent=agent_name, model=model,
+            prompt=f"Read your task from: {prompt_file}",
+            slug=slug, timeout_s=AGENT_TIMEOUT_S, parent_id=_ROOT_SESSION,
+            on_event=_on_event)
+    finally:
+        done.set()
+        watcher.join(timeout=2)
 
 logger.remove()
 
@@ -309,6 +387,26 @@ def run_agent_write(
     logs_dir: Path = None,
 ) -> AgentRun:
     """Run agent; agent writes output to output_path via write tool."""
+    if _TRANSPORT == "serve":
+        m = model or DEFAULT_MODEL
+        logger.info(f"[{slug}] Starting agent via serve ({m}) → {output_path.name}")
+        res = _run_step_serve(agent_name, prompt_file, slug, m)
+        if logs_dir:
+            logs_dir.mkdir(parents=True, exist_ok=True)
+            if res.event_log:
+                (logs_dir / f"{slug}.events.jsonl").write_text(res.event_log, encoding="utf-8")
+        if not res.success:
+            logger.error(f"[{slug}] serve step failed ({res.error_kind}): {res.error}")
+            return AgentRun(slug=slug, success=False, error=res.error or res.error_kind,
+                            event_log=res.event_log)
+        ok = output_path.exists() and output_path.stat().st_size > 0
+        if not ok:
+            logger.warning(f"[{slug}] serve step done but output missing: {output_path}")
+        else:
+            logger.info(f"[{slug}] Done; {output_path.stat().st_size} bytes")
+        return AgentRun(slug=slug, success=ok,
+                        error="" if ok else "output not written",
+                        event_log=res.event_log)
     m = model or DEFAULT_MODEL
     cmd = [
         OPENCODE_EXE, "run",
@@ -552,7 +650,8 @@ def _execute_pipeline(out_dir: Path, requirements_path: Path,
                 "selector", ledger, gate_design_file, final_design_path,
                 lambda: run_agent_write(
                     "solution_design_selector", selector_prompt, "selector",
-                    final_design_path, logs_dir=logs_dir,
+                    final_design_path, model=_mc.sd_role_model("selector", _MODEL_CFG),
+                    logs_dir=logs_dir,
                 ),
             )
             if not ok:
@@ -591,6 +690,7 @@ def _execute_pipeline(out_dir: Path, requirements_path: Path,
                     prompts_dir / f"critic_prompt_r{rn}.txt",
                     f"critic-r{rn}",
                     out_dir / f"_verdict_round{rn}.md",
+                    model=_mc.sd_role_model("critic", _MODEL_CFG),
                     logs_dir=logs_dir,
                 ),
             )
@@ -646,10 +746,11 @@ def _execute_pipeline(out_dir: Path, requirements_path: Path,
 
 
 # ── Commands ───────────────────────────────────────────────────────────────────
-def cmd_run(requirements_path: Path, designer_models: list[str]) -> int:
+def cmd_run(requirements_path: Path, designer_models: list[str] | None) -> int:
     if not requirements_path.exists():
         print(f"[ERROR] Requirements file not found: {requirements_path}", file=sys.stderr)
         return 1
+    designer_models = _mc.designer_models(_MODEL_CFG, designer_models)
     run_id = datetime.now().strftime("solution_design_%Y%m%d_%H%M%S")
     out_dir = requirements_path.parent.parent / run_id
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -716,16 +817,27 @@ def main() -> None:
     run_p = sub.add_parser("run", help="Generate solution design from requirements document")
     run_p.add_argument("requirements_path", type=Path)
     run_p.add_argument(
-        "--models", nargs="+", default=DESIGNER_MODELS, metavar="MODEL",
-        help=f"Models for parallel generation (default: {DESIGNER_MODELS})",
+        "--models", nargs="+", default=None, metavar="MODEL",
+        help="Models for parallel generation (default: designer_models from "
+             "models.yaml, one entry = one candidate).",
     )
     run_p.add_argument("--verbose", "-v", action="store_true")
+    run_p.add_argument(
+        "--transport", choices=["subprocess", "serve"], default="serve",
+        help="Agent call transport: one shared 'opencode serve' server + "
+             "HTTP API (serve, default) or one 'opencode run' process per "
+             "step (subprocess, legacy fallback).",
+    )
 
     res_p = sub.add_parser("resume", help="Resume an interrupted run")
     res_p.add_argument("output_dir", type=Path)
     res_p.add_argument("--retry-failed", action="store_true")
     res_p.add_argument("--force-step", metavar="STEP_ID")
     res_p.add_argument("--verbose", "-v", action="store_true")
+    res_p.add_argument(
+        "--transport", choices=["subprocess", "serve"], default="serve",
+        help="Agent call transport on resume (see 'run --transport').",
+    )
 
     sta_p = sub.add_parser("status", help="Show run state")
     sta_p.add_argument("output_dir", type=Path)
@@ -734,6 +846,13 @@ def main() -> None:
     if not args.command:
         parser.print_help()
         sys.exit(1)
+
+    global _TRANSPORT
+    _TRANSPORT = getattr(args, "transport", "serve")
+    if _TRANSPORT == "serve":
+        print("[INFO] Using serve transport (opencode serve + HTTP API)")
+    else:
+        print("[INFO] Using legacy subprocess transport (one opencode run per step)")
 
     log_level = "DEBUG" if getattr(args, "verbose", False) else "INFO"
     logger.add(sys.stderr, level=log_level, colorize=True,

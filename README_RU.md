@@ -2,7 +2,7 @@
 
 **spectra** принимает папку с сырыми клиентскими документами — RFP, предложения, записи встреч, PDF, таблицы, изображения — и превращает их в готовые технические артефакты: структурированную спецификацию требований, подборку вопросов для архитектурной сессии и полноценное предложение по решению. Кладёте файлы, пайплайн запускается, документы выходят.
 
-Внутри — многоагентная AI-система. Агенты **opencode** CLI занимаются чтением и написанием документов — работает любая модель от любого провайдера: Kimi K2.6, DeepSeek, GPT-4o, Claude, Qwen или локальная модель через Ollama. Python-оркестраторы управляют выполнением — порядком фаз, параллелизмом, восстановлением после сбоев и логикой повторов. Все передачи между фазами — это файлы на диске, поэтому любой шаг можно возобновить после сбоя без повторного запуска уже выполненных этапов.
+Внутри — многоагентная AI-система. Агенты **opencode** CLI занимаются чтением и написанием документов — работает любая модель от любого провайдера: Kimi K3, DeepSeek, GPT, Claude, Qwen или локальная модель через Ollama. Python-оркестраторы управляют выполнением — порядком фаз, параллелизмом, восстановлением после сбоев и логикой повторов. Все передачи между фазами — это файлы на диске, поэтому любой шаг можно возобновить после сбоя без повторного запуска уже выполненных этапов.
 
 Три пайплайна, одна входная папка:
 
@@ -15,8 +15,6 @@
 ---
 
 ## Пайплайны
-
-![Рис. 1. Три пайплайна: Extract, Discovery, Solution Design](docs/illustrations/pipelines.png)
 
 *Рис. 1. Три пайплайна — Extract, Discovery и Solution Design — все управляются Python-оркестраторами. Extract и Discovery разделяют Фазу 0 и Фазу 1 (параллельное извлечение из источников). Solution Design принимает готовый документ с требованиями на вход.*
 
@@ -42,6 +40,10 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 # Настроить окружение
 cp .env.example .env
 # → добавить хотя бы один ключ провайдера (MOONSHOT_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, …)
+cp opencode.json.example .opencode/opencode.json
+# → проверить провайдеров/модели/пути MCP под свою систему
+cp models.yaml.example models.yaml
+# → маршрутизация моделей: дефолт, per-agent закрепления, кандидаты SD
 
 # Запустить извлечение требований
 .venv/bin/python3 requirements_runner.py run /путь/до/папки/с/документами
@@ -87,6 +89,10 @@ python -m venv .venv
 # Настроить окружение
 copy .env.example .env
 # → добавить хотя бы один ключ провайдера (MOONSHOT_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, …)
+copy opencode.json.example .opencode\opencode.json
+# → проверить провайдеров/модели/пути MCP под свою систему
+copy models.yaml.example models.yaml
+# → маршрутизация моделей: дефолт, per-agent закрепления, кандидаты SD
 
 # Запустить извлечение требований
 .venv\Scripts\python requirements_runner.py run C:\путь\до\папки\с\документами
@@ -248,8 +254,6 @@ project/
 
 ### Режим Extract
 
-![Рис. 2. Пайплайн Extract — сканирование, параллельное извлечение, синтез, цикл критика](docs/illustrations/extract_pipeline.png)
-
 *Рис. 2. Пайплайн Extract — сканирование, параллельное извлечение, синтез, цикл критика.*
 
 ```
@@ -326,8 +330,6 @@ VERDICT: REVISE
 
 ### Пайплайн Solution Design
 
-![Рис. 3. Пайплайн Solution Design — параллельная генерация несколькими моделями, отбор, цикл критика](docs/illustrations/solution_design_pipeline.png)
-
 *Рис. 3. Пайплайн Solution Design — параллельная генерация несколькими моделями, отбор, цикл критика.*
 
 ```
@@ -381,8 +383,10 @@ python3 solution_design_runner.py run _requirements.md \
 | `run` | `--workers` | 3 | Максимальное число параллельных `source_processor` |
 | `run` | `--interactive` | выкл | Остановка на HITL-контрольных точках |
 | `run` | `--debug` | выкл | Логирование уровня DEBUG в stderr |
+| `run` | `--transport` | `serve` | Транспорт агентов: общий `opencode serve` + HTTP API, либо `subprocess` (legacy fallback) |
 | `resume` | `--model` | — | Переопределить модель при возобновлении |
 | `resume` | `--workers` | 3 | Параллелизм для оставшихся extract-шагов |
+| `resume` | `--transport` | `serve` | Аналогично `run --transport` |
 | `status` | `output_dir` | — | Таблица шагов: статус, время, попытки, артефакт/ошибка |
 | `resume` | `output_dir` | — | Продолжить с места остановки |
 | `resume` | `--retry-failed` | выкл | Сбросить все `failed` шаги в `pending` |
@@ -395,9 +399,11 @@ python3 solution_design_runner.py run _requirements.md \
 | `run` | `requirements_path` | — | Путь до `_requirements.md` |
 | `run` | `--models MODEL [...]` | `kimi/kimi-k3` | Модели для параллельной Фазы 1 |
 | `run` | `--verbose` / `-v` | выкл | Логирование DEBUG в stderr |
+| `run` | `--transport` | `serve` | Транспорт агентов: общий `opencode serve` + HTTP API, либо `subprocess` (legacy fallback) |
 | `status` | `output_dir` | — | Показать таблицу шагов |
 | `resume` | `output_dir` | — | Продолжить прерванный запуск |
 | `resume` | `--retry-failed` | выкл | Сбросить упавшие шаги |
+| `resume` | `--transport` | `serve` | Аналогично `run --transport` |
 | `resume` | `--force-step STEP_ID` | — | Принудительно сбросить один шаг (напр. `selector`, `critic:r2`) |
 
 ### ID шагов (для `--force-step`)
@@ -412,6 +418,16 @@ python3 solution_design_runner.py run _requirements.md \
 | solution design | `selector` | |
 | solution design | `critic:r<n>` | `critic:r1` |
 | solution design | `revision:r<n>` | `revision:r2` |
+
+---
+
+## Транспорт (serve vs subprocess)
+
+По умолчанию оба оркестратора общаются с агентами через один общий процесс `opencode serve` (HTTP + SSE API; спека в `docs/SPEC_SERVE_API.md` — папка `docs/` локальная, в git-репозиторий не входит). Сервер стартует лениво на каждый запуск оркестратора и останавливается на выходе; каждый шаг агента выполняется в отдельной сессии под общим корневым сеансом `run-<run_id>`.
+
+- **Отладка живого прогона:** пока оркестратор работает, из другого терминала можно подключиться к тому же серверу командой `opencode attach` (адрес и порт — в строке лога `serve transport ready`) и смотреть сессии, сообщения и вызовы инструментов в TUI.
+- **Откат:** `--transport subprocess` возвращает старое поведение (отдельный процесс `opencode run` на каждый шаг). Полный откат — `--transport subprocess` + `git revert` коммитов serve.
+- Permissions автоматически подтверждаются оркестратором через API (эквивалент `--dangerously-skip-permissions`); heartbeat длинных шагов идёт по SSE-событиям, а не по stdout процесса.
 
 ---
 
@@ -437,11 +453,33 @@ python3 requirements_runner.py resume output_dir/ --force-step critic:r2
 
 ## Маршрутизация моделей
 
-Все модели используют формат `провайдер/model-id`. Оркестратор передаёт это значение в `opencode run --model`. Провайдеры определяются в `opencode.json`.
+Все модели используют формат `провайдер/model-id`. Оркестратор передаёт это значение при вызове агента (поле model в `POST /session/:id/message` на serve-транспорте, либо `opencode run --model` в subprocess-fallback). Провайдеры определяются в `opencode.json`.
+
+### Глобальная маршрутизация (`models.yaml`, корень репо)
+
+Единое место назначения моделей для обоих оркестраторов. Файл в `.gitignore` (локальный конфиг) — создаётся один раз: `cp models.yaml.example models.yaml`. Приоритет:
+
+- `requirements_runner`: `plan/params.yaml` прогона → CLI `--model` → `models.yaml`
+- `solution_design_runner`: CLI `--models` → `models.yaml`
+
+```yaml
+default_model: kimi/kimi-k3          # дефолт для всего
+
+agents: {}                           # per-agent закрепления для requirements pipeline
+# agents:
+#   requirements_critic: openai/gpt-5.5   # критик на другой модели
+
+solution_design:
+  designer_models:                   # одна строка = один параллельный кандидат Фазы 1
+    - kimi/kimi-k3
+    # - openai/gpt-5.5               # раскомментируйте для конкурса 2 моделей
+  selector_model: kimi/kimi-k3       # выбирает лучшего кандидата (когда их >1)
+  critic_model: kimi/kimi-k3         # критик дизайна; ревизия идёт на winning_model
+```
 
 ### Переопределение моделей по агентам (`plan/params.yaml`)
 
-Генерируется автоматически при первом запуске. Редактируйте для назначения конкретных моделей конкретным агентам:
+Генерируется автоматически при первом запуске — это закрепления **на конкретный прогон**, они побеждают всё (CLI и `models.yaml`). Редактируйте для назначения моделей агентам только в этом прогоне:
 
 ```yaml
 # Kimi везде (по умолчанию)
@@ -453,19 +491,15 @@ models:
   arch_probe:               kimi/kimi-k3
   requirements_writer:      kimi/kimi-k3
   requirements_critic:      deepseek/deepseek-chat
-  solution_designer:        kimi/kimi-k3
-  solution_design_critic:   openai/gpt-4o            # сильный критик
 
 # Смешанный: Kimi + Claude на критически важных агентах
 models:
   source_processor:         deepseek/deepseek-chat
   requirements_writer:      anthropic/claude-sonnet-4-6
   requirements_critic:      anthropic/claude-sonnet-4-6
-  solution_designer:        kimi/kimi-k3
-  solution_design_critic:   anthropic/claude-sonnet-4-6
 ```
 
-Пустой `models: {}` → все агенты используют `DEFAULT_MODEL = kimi/kimi-k3`.
+Пустой `models: {}` → агенты наследуют `models.yaml` (по умолчанию `kimi/kimi-k3`).
 
 ### Добавление провайдера
 
