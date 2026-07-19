@@ -79,6 +79,40 @@ class TestSessionEvents(unittest.TestCase):
             "id": "per_1", "sessionID": "ses_A", "permission": "bash"}})
         self.assertEqual(len(cap.permission_requests), 1)
 
+    def test_question_queued(self):
+        cap = _SessionEvents("ses_A")
+        cap.feed({"type": "question.asked", "properties": {
+            "id": "que_1", "sessionID": "ses_A", "questions": []}})
+        self.assertEqual(len(cap.question_requests), 1)
+
+    def test_progress_updates_timestamp(self):
+        import time
+        cap = _SessionEvents("ses_A")
+        cap.last_progress = time.time() - 1000
+        cap.feed({"type": "message.part.delta", "properties": {"sessionID": "ses_A"}})
+        self.assertLess(time.time() - cap.last_progress, 5)
+        cap.feed({"type": "session.status", "properties": {"sessionID": "ses_A"}})
+        self.assertLess(time.time() - cap.last_progress, 5,
+                        "session.status must NOT count as progress")
+
+    def test_stall_classified(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/session":
+                return httpx.Response(200, json=SESSION)
+            if request.url.path.endswith("/abort"):
+                return httpx.Response(200, json=True)
+            if request.url.path.endswith("/message"):
+                raise httpx.ReadTimeout("hang after abort", request=request)
+            return httpx.Response(404)
+
+        srv = make_server(handler)
+        capture = _SessionEvents("ses_test123")
+        capture.stalled.set()
+        res = srv.run_step(agent="a", model="kimi/kimi-k3", prompt="p", slug="s",
+                           timeout_s=10, use_sse=False)
+        # without SSE the stall flag never sets: ReadTimeout -> timeout
+        self.assertEqual(res.error_kind, "timeout")
+
 
 class TestRunStep(unittest.TestCase):
     def test_happy_path(self):

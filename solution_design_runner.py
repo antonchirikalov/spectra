@@ -399,6 +399,10 @@ def run_agent_write(
             if res.event_log:
                 (logs_dir / f"{slug}.events.jsonl").write_text(res.event_log, encoding="utf-8")
         if not res.success:
+            if res.error_kind == "stall" and output_path.exists() \
+                    and output_path.stat().st_size > 0:
+                logger.warning(f"[{slug}] step stalled after writing output — accepting")
+                return AgentRun(slug=slug, success=True, event_log=res.event_log)
             logger.error(f"[{slug}] serve step failed ({res.error_kind}): {res.error}")
             return AgentRun(slug=slug, success=False, error=res.error or res.error_kind,
                             event_log=res.event_log)

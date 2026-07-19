@@ -65,14 +65,19 @@ class StepResult:
 
 
 class _SessionEvents:
-    """Per-step SSE capture: raw log lines, first fatal error, permission dispatch."""
+    """Per-step SSE capture: raw log lines, first fatal error, permission/question dispatch."""
+
+    PROGRESS_TYPES = ("message.part.delta", "message.part.updated", "message.updated")
 
     def __init__(self, session_id: str):
         self.session_id = session_id
         self.lines: list[str] = []
         self.first_error: dict | None = None        # session.error payload (non-abort)
         self.aborted = threading.Event()
+        self.stalled = threading.Event()
         self.permission_requests: list[dict] = []
+        self.question_requests: list[dict] = []
+        self.last_progress = time.time()
 
     def feed(self, event: dict) -> None:
         etype = event.get("type", "")
@@ -80,6 +85,8 @@ class _SessionEvents:
         if props.get("sessionID") != self.session_id:
             return
         self.lines.append(json.dumps(event, ensure_ascii=False))
+        if etype in self.PROGRESS_TYPES:
+            self.last_progress = time.time()
         if etype == "session.error":
             err = props.get("error") or {}
             if err.get("name") == "MessageAbortedError":
@@ -88,6 +95,8 @@ class _SessionEvents:
                 self.first_error = err
         elif etype in ("permission.asked", "permission.v2.asked"):
             self.permission_requests.append(props)
+        elif etype in ("question.asked", "question.v2.asked"):
+            self.question_requests.append(props)
 
 
 class OpencodeServer:
@@ -207,6 +216,8 @@ class OpencodeServer:
                                 pass
                         if auto_approve and capture.permission_requests:
                             self._approve_pending(capture)
+                        if capture.question_requests:
+                            self._reject_pending_questions(capture)
         except Exception as exc:  # noqa: BLE001 — SSE is best-effort
             logger.warning(f"SSE listener stopped: {exc!r}")
 
@@ -221,11 +232,37 @@ class OpencodeServer:
             except httpx.HTTPError as exc:
                 logger.warning(f"permission reply failed: {exc!r}")
 
+    def _reject_pending_questions(self, capture: _SessionEvents) -> None:
+        """Pipeline agents must not ask the user anything — auto-reject so they proceed."""
+        while capture.question_requests:
+            props = capture.question_requests.pop()
+            qid = props.get("id")
+            try:
+                self.client.post(f"/question/{qid}/reject", timeout=10)
+                logger.info(f"[{capture.session_id}] question {qid} auto-rejected "
+                            f"(headless run)")
+            except httpx.HTTPError as exc:
+                logger.warning(f"question reject failed: {exc!r}")
+
+    def _stall_watchdog(self, capture: _SessionEvents, stop: threading.Event,
+                        stall_timeout_s: int, pending: threading.Event) -> None:
+        """Abort the step if no message progress events arrive for stall_timeout_s."""
+        while not stop.wait(15):
+            if not pending.is_set():
+                return
+            silent = time.time() - capture.last_progress
+            if silent > stall_timeout_s:
+                logger.error(f"[{capture.session_id}] no progress events for "
+                             f"{int(silent)}s — aborting as stalled")
+                capture.stalled.set()
+                self._abort(capture.session_id)
+                return
+
     # ── main entry ───────────────────────────────────────────────────────────
     def run_step(self, *, agent: str, model: str, prompt: str, slug: str,
                  timeout_s: int, parent_id: str | None = None,
                  auto_approve: bool = True, use_sse: bool = True,
-                 on_event=None) -> StepResult:
+                 stall_timeout_s: int = 420, on_event=None) -> StepResult:
         body_session = {"title": slug}
         if parent_id:
             body_session["parentID"] = parent_id
@@ -237,12 +274,17 @@ class OpencodeServer:
         sid = session.get("id", "")
         capture = _SessionEvents(sid)
         stop = threading.Event()
+        pending = threading.Event()
+        pending.set()
         sse_thread = None
         if use_sse:
             sse_thread = threading.Thread(target=self._sse_listen,
                                           args=(capture, stop, auto_approve, on_event),
                                           daemon=True)
             sse_thread.start()
+            threading.Thread(target=self._stall_watchdog,
+                             args=(capture, stop, stall_timeout_s, pending),
+                             daemon=True).start()
 
         try:
             resp = self.client.post(
@@ -259,12 +301,22 @@ class OpencodeServer:
                               session_id=sid, event_log="\n".join(capture.lines))
         except httpx.HTTPError as exc:
             stop.set()
+            if capture.stalled.is_set():
+                return StepResult(False, error_kind="stall",
+                                  error=f"no progress events for {stall_timeout_s}s (aborted)",
+                                  session_id=sid, event_log="\n".join(capture.lines))
             return StepResult(False, error_kind="process", error=repr(exc),
                               session_id=sid, event_log="\n".join(capture.lines))
         finally:
+            pending.clear()
             stop.set()
             if sse_thread:
                 sse_thread.join(timeout=SSE_GRACE_S + 2)
+
+        if capture.stalled.is_set():
+            return StepResult(False, error_kind="stall",
+                              error=f"no progress events for {stall_timeout_s}s (aborted)",
+                              session_id=sid, event_log="\n".join(capture.lines))
 
         if resp.status_code != 200:
             return StepResult(False, error_kind="process",

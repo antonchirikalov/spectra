@@ -818,6 +818,12 @@ def run_agent_write(agent_name: str, prompt_file: Path, slug: str,
         logger.info(f"[{slug}] Starting agent write-mode via serve ({m}) → {output_path.name}")
         res = _run_step_serve(agent_name, prompt_file, slug, m)
         if not res.success:
+            if res.error_kind == "stall" and output_path.exists() \
+                    and output_path.stat().st_size > 0:
+                # Agent finished writing, then POST hung (seen on arch_critic):
+                # the artifact is the success criterion for write-mode agents.
+                logger.warning(f"[{slug}] step stalled after writing output — accepting")
+                return True, res.event_log
             logger.error(f"[{slug}] serve write step failed ({res.error_kind}): {res.error}")
             return False, res.event_log
         logger.info(f"[{slug}] Agent step finished (serve)")
