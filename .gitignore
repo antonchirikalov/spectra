@@ -19,3 +19,5 @@ temp_*/
 tmp_*/
 *.pdf
 ~$*
+/tests
+.idea/
